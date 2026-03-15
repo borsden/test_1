@@ -1,8 +1,8 @@
 #pragma once
 
-#include "core/batch_builder.h"
-#include "core/parquet_writer.h"
-#include "core/pcap_reader.h"
+#include "batch_builder.h"
+#include "parquet_writer.h"
+#include "pcap_reader.h"
 
 #include <filesystem>
 #include <memory>

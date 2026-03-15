@@ -48,7 +48,7 @@ class TableStreamWriter {
     void Append(const Row &row)
     {
         func_(stream_->writer(), row);
-        stream_->writer() << parquet::EndRow();
+        stream_->writer() << parquet::EndRow;
         stream_->IncrementRow();
     }
 

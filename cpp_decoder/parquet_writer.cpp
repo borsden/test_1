@@ -1,4 +1,4 @@
-#include "core/parquet_writer.h"
+#include "parquet_writer.h"
 
 #include <arrow/io/file.h>
 #include <arrow/status.h>
@@ -12,10 +12,9 @@ namespace {
 
 std::shared_ptr<parquet::WriterProperties> MakeWriterProperties()
 {
-    return parquet::WriterProperties::Builder()
-        ->compression(parquet::Compression::SNAPPY)
-        ->version(parquet::ParquetVersion::PARQUET_2_0)
-        ->build();
+    parquet::WriterProperties::Builder builder;
+    builder.compression(parquet::Compression::SNAPPY);
+    return builder.build();
 }
 
 }  // namespace
@@ -45,11 +44,13 @@ ParquetStream::~ParquetStream()
 void ParquetStream::Close()
 {
     if (writer_) {
-        writer_->Close();
         writer_.reset();
     }
     if (sink_) {
-        sink_->Close();
+        auto status = sink_->Close();
+        if (!status.ok()) {
+            throw std::runtime_error(std::string("Unable to close parquet sink: ") + status.ToString());
+        }
         sink_.reset();
     }
 }
