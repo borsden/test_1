@@ -1040,35 +1040,36 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                 sbe_types::FramingHeader framing(
                     mutable_payload, framing_offset, payload.size, sbe_types::FramingHeader::sbeSchemaVersion());
                 cursor += sbe_types::FramingHeader::encodedLength();
+                const std::uint16_t framing_length = sbe_types::FramingHeader::encodedLength();
                 const std::uint16_t message_length = framing.messageLength();
                 if (message_length == 0) {
                     cursor = payload.size;
                     break;
                 }
-                if (message_length < message_header_len) {
+                if (message_length < framing_length + message_header_len) {
                     log_error(meta, "framing", packet_index, message_index, 0, "message_bounds",
                               "message shorter than header", "");
                     cursor += message_length;
                     ++message_index;
                     continue;
                 }
-                if (cursor + message_length > payload.size) {
+                const std::uint16_t sbe_length = static_cast<std::uint16_t>(message_length - framing_length);
+                if (cursor + sbe_length > payload.size) {
                     log_error(meta, "framing", packet_index, message_index, 0, "message_bounds",
                               "message exceeds payload bounds", bytes_to_hex(payload.data + cursor,
                                                                                payload.size - cursor));
                     break;
                 }
-                const std::size_t message_start = cursor;
-                auto *message_ptr = mutable_payload + message_start;
-                const std::size_t remaining_buffer = payload.size - message_start;
+                auto *message_ptr = mutable_payload + cursor;
+                const std::size_t sbe_buffer = sbe_length;
                 sbe_types::MessageHeader message_header(
-                    message_ptr, 0, remaining_buffer, sbe_types::MessageHeader::sbeSchemaVersion());
+                    message_ptr, 0, sbe_buffer, sbe_types::MessageHeader::sbeSchemaVersion());
                 const std::uint16_t template_id = message_header.templateId();
                 const std::uint16_t schema_id = message_header.schemaId();
                 const std::uint16_t schema_version = message_header.version();
                 const std::uint16_t block_length = message_header.blockLength();
                 const std::size_t header_length = sbe_types::MessageHeader::encodedLength();
-                const std::size_t body_length = message_length - header_length;
+                const std::size_t body_length = sbe_length - header_length;
 
                 if (options_.validate_schema && framing.encodingType() != kExpectedEncodingType) {
                     log_error(meta, "framing", packet_index, message_index, template_id, "encoding_type",
@@ -1081,87 +1082,79 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                     oss << "schema=" << schema_id << " version=" << schema_version;
                     log_error(meta, "message_header", packet_index, message_index, template_id, "schema_mismatch",
                               oss.str(), bytes_to_hex(reinterpret_cast<std::uint8_t *>(message_ptr),
-                                                     message_length));
-                    cursor += message_length;
+                                                     sbe_length));
+                    cursor += sbe_length;
                     ++message_index;
                     continue;
                 }
 
                 MessageContext msg_ctx{&meta, &packet_row, message_index, template_id};
                 auto *message_body = message_ptr;
-                std::size_t consumed_body = body_length;
                 try {
                     switch (template_id) {
                         case sbe_types::SecurityDefinition_12::sbeTemplateId(): {
                             sbe_types::SecurityDefinition_12 msg_wrapper;
                             msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
-                                                      block_length, schema_version, remaining_buffer);
+                                                      block_length, schema_version, sbe_buffer);
                             decode_security_definition(msg_ctx, msg_wrapper, instruments_writer_.get(),
                                                         instrument_legs_writer_.get(),
                                                         instrument_underlyings_writer_.get(),
                                                         instrument_attributes_writer_.get());
-                            consumed_body = static_cast<std::size_t>(msg_wrapper.encodedLength());
                             break;
                         }
                         case sbe_types::SnapshotFullRefresh_Header_30::sbeTemplateId(): {
                             sbe_types::SnapshotFullRefresh_Header_30 msg_wrapper;
                             msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
-                                                      block_length, schema_version, remaining_buffer);
+                                                      block_length, schema_version, sbe_buffer);
                             decode_snapshot_header(msg_ctx, msg_wrapper, snapshot_headers_writer_.get(),
                                                    snapshot_header_row_id_,
                                                    last_snapshot_row_for_security_);
-                            consumed_body = static_cast<std::size_t>(msg_wrapper.encodedLength());
                             break;
                         }
                         case sbe_types::SnapshotFullRefresh_Orders_MBO_71::sbeTemplateId(): {
                             sbe_types::SnapshotFullRefresh_Orders_MBO_71 msg_wrapper;
                             msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
-                                                      block_length, schema_version, remaining_buffer);
+                                                      block_length, schema_version, sbe_buffer);
                             decode_snapshot_orders(msg_ctx, msg_wrapper, snapshot_orders_writer_.get(),
                                                    last_snapshot_row_for_security_);
-                            consumed_body = static_cast<std::size_t>(msg_wrapper.encodedLength());
                             break;
                         }
                         case sbe_types::Order_MBO_50::sbeTemplateId(): {
                             sbe_types::Order_MBO_50 msg_wrapper;
                             msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
-                                                      block_length, schema_version, remaining_buffer);
+                                                      block_length, schema_version, sbe_buffer);
                             if (incremental_orders_writer_) {
                                 incremental_orders_writer_->Append(make_incremental_order_row(msg_ctx, msg_wrapper));
                             }
-                            consumed_body = static_cast<std::size_t>(msg_wrapper.encodedLength());
                             break;
                         }
                         case sbe_types::DeleteOrder_MBO_51::sbeTemplateId(): {
                             sbe_types::DeleteOrder_MBO_51 msg_wrapper;
                             msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
-                                                      block_length, schema_version, remaining_buffer);
+                                                      block_length, schema_version, sbe_buffer);
                             if (incremental_deletes_writer_) {
                                 incremental_deletes_writer_->Append(
                                     make_incremental_delete_row(msg_ctx, msg_wrapper));
                             }
-                            consumed_body = static_cast<std::size_t>(msg_wrapper.encodedLength());
                             break;
                         }
                         case sbe_types::MassDeleteOrders_MBO_52::sbeTemplateId(): {
                             sbe_types::MassDeleteOrders_MBO_52 msg_wrapper;
                             msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
-                                                      block_length, schema_version, remaining_buffer);
+                                                      block_length, schema_version, sbe_buffer);
                             if (incremental_mass_deletes_writer_) {
                                 incremental_mass_deletes_writer_->Append(
                                     make_mass_delete_row(msg_ctx, msg_wrapper));
                             }
-                            consumed_body = static_cast<std::size_t>(msg_wrapper.encodedLength());
                             break;
                         }
                         case sbe_types::Trade_53::sbeTemplateId(): {
                             sbe_types::Trade_53 msg_wrapper;
                             msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
-                                                      block_length, schema_version, remaining_buffer);
+                                                      block_length, schema_version, sbe_buffer);
                             if (incremental_trades_writer_) {
                                 incremental_trades_writer_->Append(make_trade_row(msg_ctx, msg_wrapper));
                             }
-                            consumed_body = static_cast<std::size_t>(msg_wrapper.encodedLength());
                             break;
                         }
                         default: {
@@ -1187,8 +1180,7 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                               bytes_to_hex(reinterpret_cast<std::uint8_t *>(message_body), body_length));
                 }
 
-                const std::size_t total_consumed = header_length + consumed_body;
-                cursor = message_start + total_consumed;
+                cursor += sbe_length;
                 ++message_index;
             }
         } catch (const std::exception &ex) {
