@@ -1,38 +1,43 @@
 #!/usr/bin/env python3
-"""Flatten decoder parquet outputs into per-channel/per-instrument CSV bundles."""
+"""Flatten decoder parquet outputs into per-table Hive-partitioned Parquet dirs."""
 
 from __future__ import annotations
 
 import re
 import shutil
 from pathlib import Path
-from typing import Dict, Iterable, Sequence
+from typing import Dict, Iterable, Sequence, Set, Tuple
 
 import click
-import pandas as pd
+import pandas as pd  # only used for Arrow dtype conversions when needed
 import pyarrow as pa
-import pyarrow.dataset as ds
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 from tqdm import tqdm
 
+DEFAULT_BATCH_SIZE = 2_000_000
 CHANNEL_RE = re.compile(r"^(?P<chan>\d+)")
 FEED_LEG_RE = re.compile(r"feed(?P<leg>[AB])", re.IGNORECASE)
-BATCH_SIZE = 65_536
 
-INSTRUMENT_TABLES = [
-    "instruments",
-    "instrument_underlyings",
-    "instrument_legs",
-    "instrument_attributes",
-]
-
-PARTITIONED_TABLES: dict[str, Sequence[str]] = {
+TABLE_PARTITIONS: dict[str, Sequence[str]] = {
+    "instruments": ["channel_hint", "security_id"],
+    "instrument_underlyings": ["channel_hint", "security_id"],
+    "instrument_legs": ["channel_hint", "security_id"],
+    "instrument_attributes": ["channel_hint", "security_id"],
     "snapshot_headers": ["channel_hint", "security_id"],
     "snapshot_orders": ["channel_hint", "security_id"],
     "incremental_orders": ["channel_hint", "security_id", "feed_leg"],
     "incremental_deletes": ["channel_hint", "security_id", "feed_leg"],
     "incremental_mass_deletes": ["channel_hint", "security_id", "feed_leg"],
     "incremental_trades": ["channel_hint", "security_id", "feed_leg"],
+    "incremental_other": ["channel_hint", "security_id", "feed_leg"],
+}
+
+SMALL_TABLES = {
+    "instruments",
+    "instrument_underlyings",
+    "instrument_legs",
+    "instrument_attributes",
 }
 
 
@@ -48,86 +53,42 @@ def parse_leg_from_name(source_file: str) -> str | None:
     return match.group("leg").upper() if match else None
 
 
-class FlattenContext:
-    """Helpers for lightweight CSV writers (instrument metadata, extras)."""
-
-    def __init__(self, output_dir: Path) -> None:
-        self.output_dir = output_dir
-        self._written_flags: Dict[Path, bool] = {}
-
-    def channel_dir(self, channel: int) -> Path:
-        path = self.output_dir / f"{channel}"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
-    def instrument_dir(self, channel: int, security_id: int) -> Path:
-        return self.channel_dir(channel) / f"{security_id}"
-
-    def leg_dir(self, channel: int, security_id: int, leg: str) -> Path:
-        return self.instrument_dir(channel, security_id) / leg
-
-    def _write_df(self, path: Path, df: pd.DataFrame) -> None:
-        if df.empty:
-            return
-        path.parent.mkdir(parents=True, exist_ok=True)
-        already = self._written_flags.get(path, False)
-        mode = "a" if already else "w"
-        with path.open(mode, newline="") as handle:
-            df.to_csv(handle, header=not already, index=False)
-        self._written_flags[path] = True
-
-    def write_instrument_row(self, channel: int, row: pd.Series) -> None:
-        inst_dir = self.instrument_dir(channel, int(row["security_id"]))
-        df = row.to_frame().T
-        self._write_df(inst_dir / "instrument.csv", df)
-
-    def write_channel_table(self, channel: int, name: str, df: pd.DataFrame) -> None:
-        self._write_df(self.channel_dir(channel) / f"{name}.csv", df)
-
-    def write_incremental(self, channel: int, security_id: int, leg: str,
-                          name: str, df: pd.DataFrame) -> None:
-        leg_dir = self.leg_dir(channel, security_id, leg)
-        self._write_df(leg_dir / f"{name}.csv", df)
+def parse_table_filter(arg: str) -> Set[str]:
+    if not arg or arg.strip() in {"*", "all"}:
+        return set(TABLE_PARTITIONS)
+    names = {piece.strip() for piece in arg.split(",") if piece.strip()}
+    unknown = names - set(TABLE_PARTITIONS)
+    if unknown:
+        raise click.ClickException(
+            "Unknown table names: " + ", ".join(sorted(unknown)))
+    return names
 
 
-def ensure_channel(df: pd.DataFrame) -> None:
-    if "channel_hint" in df.columns:
-        return
-    df["channel_hint"] = df["source_file"].map(parse_channel_from_name)
+def ensure_extra_columns(table: pa.Table, partition_cols: Sequence[str]) -> pa.Table:
+    needs_channel = "channel_hint" in partition_cols and "channel_hint" not in table.schema.names
+    needs_leg = "feed_leg" in partition_cols and "feed_leg" not in table.schema.names
+    if not needs_channel and not needs_leg:
+        return table
+    if "source_file" not in table.schema.names:
+        raise click.ClickException(
+            "Cannot derive channel/feed_leg because 'source_file' column is missing")
+    source_array = table.column(table.schema.get_field_index("source_file"))
+    data = source_array.to_pylist()
+    new_columns = []
+    if needs_channel:
+        channels = [parse_channel_from_name(s) for s in data]
+        new_columns.append(pa.field("channel_hint", pa.int32()))
+        table = table.append_column("channel_hint", pa.array(channels, type=pa.int32()))
+    if needs_leg:
+        legs = [parse_leg_from_name(s) for s in data]
+        new_columns.append(pa.field("feed_leg", pa.string()))
+        table = table.append_column("feed_leg", pa.array(legs, type=pa.string()))
+    return table
 
 
-def ensure_feed_leg(df: pd.DataFrame) -> None:
-    if "feed_leg" in df.columns:
-        return
-    df["feed_leg"] = df["source_file"].map(parse_leg_from_name)
-
-
-def load_table(parsed_dir: Path, name: str) -> pd.DataFrame:
-    path = parsed_dir / f"{name}.parquet"
-    if not path.exists():
-        raise click.ClickException(f"Missing parquet table: {path}")
-    table = pq.read_table(path)
-    return table.to_pandas(types_mapper=pd.ArrowDtype)
-
-
-def write_instrument_tables(ctx: FlattenContext, parsed_dir: Path) -> None:
-    instruments = load_table(parsed_dir, "instruments")
-    ensure_channel(instruments)
-    for channel, chan_df in instruments.groupby("channel_hint"):
-        channel_int = int(channel)
-        ctx.write_channel_table(channel_int, "instruments", chan_df)
-        for _, row in chan_df.iterrows():
-            ctx.write_instrument_row(channel_int, row)
-
-    for extra in ("instrument_underlyings", "instrument_legs", "instrument_attributes"):
-        df = load_table(parsed_dir, extra)
-        ensure_channel(df)
-        for channel, chan_df in df.groupby("channel_hint"):
-            ctx.write_channel_table(int(channel), extra, chan_df)
-
-
-def iter_batches(pf: pq.ParquetFile, desc: str, progress: bool) -> Iterable[pa.RecordBatch]:
-    iterator = pf.iter_batches(batch_size=BATCH_SIZE)
+def iter_batches(pf: pq.ParquetFile, desc: str, progress: bool,
+                 batch_size: int) -> Iterable[pa.RecordBatch]:
+    iterator = pf.iter_batches(batch_size=batch_size)
     if not progress:
         yield from iterator
         return
@@ -138,108 +99,123 @@ def iter_batches(pf: pq.ParquetFile, desc: str, progress: bool) -> Iterable[pa.R
             yield batch
 
 
-def partition_schema(schema: pa.Schema, columns: Sequence[str]) -> pa.Schema:
-    fields = []
-    for name in columns:
-        idx = schema.get_field_index(name)
-        if idx == -1:
-            raise click.ClickException(
-                f"Column '{name}' not present in schema {schema.names}")
-        fields.append(schema.field(idx))
-    return pa.schema(fields)
+def split_table(table: pa.Table, partition_cols: Sequence[str]) -> Iterable[Tuple[Tuple, pa.Table]]:
+    if table.num_rows == 0:
+        return
+    table = table.combine_chunks()
+    sort_keys = [(col, "ascending") for col in partition_cols]
+    indices = pc.sort_indices(table, sort_keys=sort_keys)
+    sorted_table = table.take(indices)
+    arrays = [sorted_table[col] for col in partition_cols]
+    values = list(zip(*(arr.to_pylist() for arr in arrays)))
+    start = 0
+    current_key = values[0]
+    for idx, key in enumerate(values):
+        if key != current_key:
+            yield current_key, sorted_table.slice(start, idx - start)
+            current_key = key
+            start = idx
+    yield current_key, sorted_table.slice(start, len(values) - start)
 
 
-def relocate_partitions(tmp_base: Path, final_base: Path, table_name: str) -> None:
-    for csv_path in tmp_base.rglob(f"{table_name}.csv"):
-        relative = csv_path.relative_to(tmp_base)
-        parts = list(relative.parts)
-        *dirs, filename = parts
-        stripped: list[str] = []
-        for part in dirs:
-            if "=" in part:
-                _, value = part.split("=", 1)
-            else:
-                value = part
-            if value == "__HIVE_DEFAULT_PARTITION__":
-                value = "null"
-            stripped.append(value)
-        dest_dir = final_base.joinpath(*stripped)
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest_path = dest_dir / filename
-        if dest_path.exists():
-            dest_path.unlink()
-        csv_path.rename(dest_path)
+class PartitionedWriter:
+    def __init__(self, base_dir: Path, table_name: str, partition_cols: Sequence[str]):
+        self.partition_cols = partition_cols
+        self.table_dir = base_dir / table_name
+        self.table_dir.mkdir(parents=True, exist_ok=True)
+        self.counters: Dict[Tuple, int] = {}
+
+    def _value_str(self, value: object) -> str:
+        if value is None:
+            return "null"
+        if isinstance(value, bytes):
+            return value.decode("utf-8")
+        return str(value)
+
+    def write(self, keys: Tuple, subset: pa.Table) -> None:
+        path = self.table_dir
+        for name, value in zip(self.partition_cols, keys):
+            path = path / f"{name}={self._value_str(value)}"
+        path.mkdir(parents=True, exist_ok=True)
+        counter = self.counters.get(keys, 0)
+        file_path = path / f"part-{counter}.parquet"
+        pq.write_table(subset, file_path)
+        self.counters[keys] = counter + 1
 
 
-def write_partitioned_table(parsed_dir: Path, output_dir: Path, name: str,
-                            partition_cols: Sequence[str], progress: bool) -> None:
+def write_small_table(parsed_dir: Path, output_dir: Path, name: str,
+                      partition_cols: Sequence[str]) -> None:
+    path = parsed_dir / f"{name}.parquet"
+    if not path.exists():
+        return
+    table = pq.read_table(path)
+    table = ensure_extra_columns(table, partition_cols)
+    writer = PartitionedWriter(output_dir, name, partition_cols)
+    for keys, subset in split_table(table, partition_cols):
+        writer.write(keys, subset)
+
+
+def write_stream_table(parsed_dir: Path, output_dir: Path, name: str,
+                       partition_cols: Sequence[str], progress: bool,
+                       batch_size: int) -> None:
     source = parsed_dir / f"{name}.parquet"
     if not source.exists():
         return
     pf = pq.ParquetFile(source)
-    part_schema = partition_schema(pf.schema_arrow, partition_cols)
-    tmp_base = output_dir / "._tmp" / name
-    if tmp_base.exists():
-        shutil.rmtree(tmp_base)
-    tmp_base.mkdir(parents=True, exist_ok=True)
-    ds.write_dataset(
-        data=iter_batches(pf, name, progress),
-        schema=pf.schema_arrow,
-        base_dir=str(tmp_base),
-        format="csv",
-        partitioning=ds.partitioning(part_schema, flavor="hive"),
-        basename_template=f"{name}-{{i}}.csv",
-        max_partitions=1_000_000,
-        existing_data_behavior="overwrite_or_ignore",
-    )
-    relocate_partitions(tmp_base, output_dir, name)
-    shutil.rmtree(tmp_base)
-
-
-def write_manual_incremental_other(ctx: FlattenContext, parsed_dir: Path, progress: bool) -> None:
-    name = "incremental_other"
-    path = parsed_dir / f"{name}.parquet"
-    if not path.exists():
-        return
-    pf = pq.ParquetFile(path)
-    for batch in iter_batches(pf, name, progress):
-        df = batch.to_pandas(types_mapper=pd.ArrowDtype)
-        if df.empty:
+    writer = PartitionedWriter(output_dir, name, partition_cols)
+    for batch in iter_batches(pf, name, progress, batch_size):
+        if batch.num_rows == 0:
             continue
-        ensure_channel(df)
-        ensure_feed_leg(df)
-        for (channel, security_id, leg), group in df.groupby(
-                ["channel_hint", "security_id", "feed_leg"]):
-            if pd.isna(channel) or pd.isna(security_id) or pd.isna(leg):
-                continue
-            ctx.write_incremental(int(channel), int(security_id), str(leg), name, group)
+        table = pa.Table.from_batches([batch])
+        table = ensure_extra_columns(table, partition_cols)
+        for keys, subset in split_table(table, partition_cols):
+            writer.write(keys, subset)
+
+
+def table_exists(output_dir: Path, table: str) -> bool:
+    target = output_dir / table
+    return target.exists() and any(target.glob("**/*.parquet"))
+
+
+def remove_table_outputs(output_dir: Path, table: str) -> None:
+    shutil.rmtree(output_dir / table, ignore_errors=True)
 
 
 @click.command()
 @click.option("--parsed-dir", required=True, type=click.Path(path_type=Path, exists=True),
               help="Directory produced by the native decoder (with *.parquet tables)")
 @click.option("--output-dir", required=True, type=click.Path(path_type=Path),
-              help="Destination directory for flattened CSV layout")
+              help="Destination directory for partitioned outputs")
 @click.option("--overwrite/--no-overwrite", default=False, show_default=True,
-              help="Allow removing an existing output directory before writing")
+              help="Replace existing partitions for the requested tables")
 @click.option("--progress/--no-progress", default=True, show_default=True,
-              help="Display tqdm progress bars while streaming batches")
-def main(parsed_dir: Path, output_dir: Path, overwrite: bool, progress: bool) -> None:
-    if output_dir.exists():
-        if not overwrite:
-            raise click.ClickException(
-                f"Output directory {output_dir} already exists. Use --overwrite to replace it.")
-        shutil.rmtree(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+              help="Display tqdm progress bars while reading Parquet batches")
+@click.option("--tables", default="*", show_default=True,
+              help="Comma-separated list of tables to process")
+@click.option("--batch-size", type=int, default=DEFAULT_BATCH_SIZE, show_default=True,
+              help="Row count per Parquet batch when streaming large tables")
+def main(parsed_dir: Path, output_dir: Path, overwrite: bool, progress: bool,
+         tables: str, batch_size: int) -> None:
+    if batch_size <= 0:
+        raise click.ClickException("--batch-size must be a positive integer")
+    selected = parse_table_filter(tables)
 
-    ctx = FlattenContext(output_dir)
-    write_instrument_tables(ctx, parsed_dir)
-    for table, partitions in PARTITIONED_TABLES.items():
-        write_partitioned_table(parsed_dir, output_dir, table, partitions, progress)
-    write_manual_incremental_other(ctx, parsed_dir, progress)
-    tmp_root = output_dir / "._tmp"
-    if tmp_root.exists():
-        shutil.rmtree(tmp_root)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for table in selected:
+        if table_exists(output_dir, table):
+            if not overwrite:
+                raise click.ClickException(
+                    f"Table '{table}' already exists in {output_dir}. "
+                    "Pass --overwrite to regenerate it.")
+            remove_table_outputs(output_dir, table)
+
+    for name in selected:
+        cols = TABLE_PARTITIONS[name]
+        if name in SMALL_TABLES:
+            write_small_table(parsed_dir, output_dir, name, cols)
+        else:
+            write_stream_table(parsed_dir, output_dir, name, cols, progress, batch_size)
+
     click.echo(f"Flattened data written to {output_dir}")
 
 

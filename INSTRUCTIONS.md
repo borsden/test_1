@@ -108,3 +108,38 @@ python scripts/decode_pcap_to_arrow.py \
 На текущем этапе Python-слой не подключается к нативному декодеру напрямую — он
 работает только с готовыми Parquet-таблицами. Когда replay/аналитика будут
 возвращены, они будут читать результаты из `--output` каталога.
+
+## 7. Постобработка (flatten) Parquet-таблиц
+
+После работы `b3sbe_decode` получаем «широкие» файлы вида
+`parsed/incremental_orders.parquet`, `snapshot_orders.parquet` и т.д. Для удобной
+работы с отдельными инструментами/каналами есть вспомогательный CLI
+`scripts/flatten_parquet.py`. Он стримово читает каждую таблицу и раскладывает её
+в Hive-партиционированные директории внутри `parsed_flatten/<table>/`:
+
+```
+python scripts/flatten_parquet.py \
+    --parsed-dir data/parsed \
+    --output-dir data/parsed_flatten \
+    --tables incremental_orders,incremental_deletes \
+    --overwrite \
+    --batch-size 2000000
+```
+
+Ключевые моменты:
+
+- `--tables` — можно перечислить подмножество таблиц; `*` (по умолчанию)
+  прогоняет все (`instruments`, `snapshot_*`, `incremental_*`,
+  `incremental_other`).
+- `--overwrite` удаляет только каталоги перечисленных таблиц внутри
+  `--output-dir`, остальные результаты остаются.
+- `--batch-size` управляет размером Arrow-батча при стриминге больших таблиц
+  (по умолчанию 2 млн строк; можно уменьшить, если не хватает памяти).
+- Каждая таблица записывается в `output_dir/<table>/channel_hint=…/security_id=…
+  [/feed_leg=…]/part-*.parquet`. Например, `data/parsed_flatten/
+  incremental_orders/channel_hint=78/security_id=100000098498/feed_leg=A/…`.
+- Запись идёт вручную, без финального «тихого» этапа, поэтому выполнение
+  завершается сразу после завершения прогресс-бара.
+
+Скрипт не изменяет исходные Parquet-файлы из `--parsed-dir` и при необходимости
+может быть запущен повторно на любом подмножестве таблиц.
