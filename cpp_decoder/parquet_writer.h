@@ -37,12 +37,14 @@ template <typename Row>
 class TableStreamWriter {
   public:
     using WriteFunc = void (*)(parquet::StreamWriter &, const Row &);
-    TableStreamWriter(const std::filesystem::path &output_dir, const std::string &table_name,
+    TableStreamWriter(const std::filesystem::path &file_path,
                       std::shared_ptr<parquet::schema::GroupNode> schema, WriteFunc func)
-        : stream_(std::make_unique<ParquetStream>(output_dir / (table_name + ".parquet"),
-                                                  std::move(schema))),
-          func_(func)
+        : stream_(nullptr), func_(func)
     {
+        if (!file_path.parent_path().empty()) {
+            std::filesystem::create_directories(file_path.parent_path());
+        }
+        stream_ = std::make_unique<ParquetStream>(file_path, std::move(schema));
     }
 
     void Append(const Row &row)

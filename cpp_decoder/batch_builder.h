@@ -2,15 +2,13 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace b3::sbe {
 
 struct PacketRow {
-    std::string source_file;
     std::int32_t channel_hint_from_filename{0};
-    std::string stream_kind;
-    std::string feed_leg;
     std::uint64_t packet_index_in_file{0};
     std::uint64_t pcap_ts_ns{0};
     std::uint32_t udp_payload_len{0};
@@ -19,8 +17,6 @@ struct PacketRow {
     std::uint64_t packet_sequence_number{0};
     std::uint64_t packet_sending_time_ns{0};
     bool packet_parse_ok{true};
-    std::string error_code;
-    std::string error_text;
 };
 
 struct MessageRow {
@@ -42,7 +38,6 @@ struct MessageRow {
 };
 
 struct InstrumentRow {
-    std::string source_file;
     std::uint64_t packet_sequence_number{0};
     std::int64_t security_id{0};
     std::string security_exchange;
@@ -84,7 +79,6 @@ struct InstrumentRow {
 };
 
 struct InstrumentUnderlyingRow {
-    std::string source_file;
     std::int64_t security_id{0};
     std::uint64_t packet_sequence_number{0};
     std::uint64_t underlying_security_id{0};
@@ -95,7 +89,6 @@ struct InstrumentUnderlyingRow {
 };
 
 struct InstrumentLegRow {
-    std::string source_file;
     std::int64_t security_id{0};
     std::uint64_t packet_sequence_number{0};
     std::uint64_t leg_security_id{0};
@@ -108,7 +101,6 @@ struct InstrumentLegRow {
 };
 
 struct InstrumentAttributeRow {
-    std::string source_file;
     std::int64_t security_id{0};
     std::uint64_t packet_sequence_number{0};
     std::uint8_t attribute_type{0};
@@ -117,9 +109,8 @@ struct InstrumentAttributeRow {
 };
 
 struct SnapshotHeaderRow {
-    std::string source_file;
-    std::int32_t channel_hint{0};
     std::uint64_t packet_sequence_number{0};
+    std::uint16_t packet_sequence_version{0};
     std::uint64_t packet_sending_time_ns{0};
     std::int64_t security_id{0};
     std::uint32_t last_msg_seq_num_processed{0};
@@ -130,8 +121,6 @@ struct SnapshotHeaderRow {
 };
 
 struct SnapshotOrderRow {
-    std::string source_file;
-    std::int32_t channel_hint{0};
     std::uint64_t snapshot_header_row_id{0};
     std::int64_t security_id{0};
     std::string security_exchange;
@@ -150,15 +139,12 @@ struct SnapshotOrderRow {
 };
 
 struct IncrementalOrderRow {
-    std::string source_file;
-    std::int32_t channel_hint{0};
-    std::string feed_leg;
     std::int64_t security_id{0};
     std::uint8_t match_event_indicator_raw{0};
     std::uint8_t md_update_action_raw{0};
-    std::string md_update_action;
+    std::string_view md_update_action;
     std::uint8_t md_entry_type_raw{0};
-    std::string side;
+    std::string_view side;
     std::int64_t price_mantissa{0};
     double price{0.0};
     std::int64_t size{0};
@@ -169,51 +155,46 @@ struct IncrementalOrderRow {
     std::uint32_t rpt_seq{0};
     std::uint64_t md_entry_timestamp_ns{0};
     std::uint64_t packet_sequence_number{0};
+    std::uint16_t packet_sequence_version{0};
     std::uint64_t packet_sending_time_ns{0};
     std::uint32_t message_index_in_packet{0};
 };
 
 struct IncrementalDeleteRow {
-    std::string source_file;
-    std::int32_t channel_hint{0};
-    std::string feed_leg;
     std::int64_t security_id{0};
     std::uint8_t match_event_indicator_raw{0};
     std::uint8_t md_update_action_raw{0};
-    std::string md_update_action;
+    std::string_view md_update_action;
     std::uint8_t md_entry_type_raw{0};
-    std::string side;
+    std::string_view side;
     std::uint32_t position_no{0};
     std::int64_t size{0};
     std::uint64_t secondary_order_id{0};
     std::uint64_t md_entry_timestamp_ns{0};
     std::uint32_t rpt_seq{0};
     std::uint64_t packet_sequence_number{0};
+    std::uint16_t packet_sequence_version{0};
     std::uint64_t packet_sending_time_ns{0};
+    std::uint32_t message_index_in_packet{0};
 };
 
 struct IncrementalMassDeleteRow {
-    std::string source_file;
-    std::int32_t channel_hint{0};
-    std::string feed_leg;
     std::int64_t security_id{0};
     std::uint8_t match_event_indicator_raw{0};
     std::uint8_t md_update_action_raw{0};
-    std::string md_update_action;
+    std::string_view md_update_action;
     std::uint8_t md_entry_type_raw{0};
-    std::string side;
-    std::uint32_t start_position{0};
-    std::uint32_t end_position{0};
+    std::string_view side;
+    std::uint32_t position_no{0};
     std::uint32_t rpt_seq{0};
     std::uint64_t md_entry_timestamp_ns{0};
     std::uint64_t packet_sequence_number{0};
+    std::uint16_t packet_sequence_version{0};
     std::uint64_t packet_sending_time_ns{0};
+    std::uint32_t message_index_in_packet{0};
 };
 
 struct IncrementalTradeRow {
-    std::string source_file;
-    std::int32_t channel_hint{0};
-    std::string feed_leg;
     std::int64_t security_id{0};
     std::uint8_t match_event_indicator_raw{0};
     std::uint8_t trading_session_id{0};
@@ -229,44 +210,44 @@ struct IncrementalTradeRow {
     std::uint64_t md_entry_timestamp_ns{0};
     std::uint32_t rpt_seq{0};
     std::uint64_t packet_sequence_number{0};
+    std::uint16_t packet_sequence_version{0};
     std::uint64_t packet_sending_time_ns{0};
+    std::uint32_t message_index_in_packet{0};
 };
 
 struct EmptyBookRow {
-    std::string source_file;
-    std::int32_t channel_hint{0};
-    std::string feed_leg;
     std::int64_t security_id{0};
     std::uint8_t match_event_indicator_raw{0};
     std::uint64_t md_entry_timestamp_ns{0};
     std::uint64_t packet_sequence_number{0};
+    std::uint16_t packet_sequence_version{0};
     std::uint64_t packet_sending_time_ns{0};
+    std::uint32_t message_index_in_packet{0};
 };
 
 struct ChannelResetRow {
-    std::string source_file;
-    std::int32_t channel_hint{0};
-    std::string feed_leg;
     std::uint8_t match_event_indicator_raw{0};
     std::uint64_t md_entry_timestamp_ns{0};
     std::uint64_t packet_sequence_number{0};
+    std::uint16_t packet_sequence_version{0};
     std::uint64_t packet_sending_time_ns{0};
+    std::uint32_t message_index_in_packet{0};
 };
 
 struct IncrementalOtherRow {
-    std::string source_file;
-    std::int32_t channel_hint{0};
-    std::string feed_leg;
     std::uint16_t template_id{0};
-    std::string template_name;
+    std::string_view template_name;
+    std::string template_name_storage;
     std::int64_t security_id{0};
     std::uint32_t rpt_seq{0};
     std::uint8_t match_event_indicator_raw{0};
     std::uint64_t md_entry_timestamp_ns{0};
     std::uint64_t packet_sequence_number{0};
+    std::uint16_t packet_sequence_version{0};
     std::uint64_t packet_sending_time_ns{0};
+    std::uint32_t message_index_in_packet{0};
     std::string body_hex;
-    std::string decode_status;
+    std::string_view decode_status;
 };
 
 struct ErrorRow {

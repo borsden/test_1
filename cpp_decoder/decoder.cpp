@@ -17,6 +17,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
+#include <future>
 #include <iomanip>
 #include <limits>
 #include <sstream>
@@ -30,7 +31,6 @@ namespace sbe_types = b3::umdf::mbo::sbe;
 namespace {
 
 #define INSTRUMENT_COLUMNS(X) \
-    X(String, source_file, row.source_file) \
     X(Int64, packet_sequence_number, static_cast<int64_t>(row.packet_sequence_number)) \
     X(Int64, security_id, row.security_id) \
     X(String, security_exchange, row.security_exchange) \
@@ -71,7 +71,6 @@ namespace {
     X(Int64, packet_sending_time_ns, static_cast<int64_t>(row.packet_sending_time_ns))
 
 #define INSTRUMENT_UNDERLYING_COLUMNS(X) \
-    X(String, source_file, row.source_file) \
     X(Int64, security_id, row.security_id) \
     X(Int64, packet_sequence_number, static_cast<int64_t>(row.packet_sequence_number)) \
     X(Int64, underlying_security_id, static_cast<int64_t>(row.underlying_security_id)) \
@@ -81,7 +80,6 @@ namespace {
     X(Int64, position_in_group, static_cast<int64_t>(row.position_in_group))
 
 #define INSTRUMENT_LEG_COLUMNS(X) \
-    X(String, source_file, row.source_file) \
     X(Int64, security_id, row.security_id) \
     X(Int64, packet_sequence_number, static_cast<int64_t>(row.packet_sequence_number)) \
     X(Int64, leg_security_id, static_cast<int64_t>(row.leg_security_id)) \
@@ -93,7 +91,6 @@ namespace {
     X(Int64, position_in_group, static_cast<int64_t>(row.position_in_group))
 
 #define INSTRUMENT_ATTRIBUTE_COLUMNS(X) \
-    X(String, source_file, row.source_file) \
     X(Int64, security_id, row.security_id) \
     X(Int64, packet_sequence_number, static_cast<int64_t>(row.packet_sequence_number)) \
     X(Int32, attribute_type, static_cast<int32_t>(row.attribute_type)) \
@@ -101,9 +98,8 @@ namespace {
     X(Int64, position_in_group, static_cast<int64_t>(row.position_in_group))
 
 #define SNAPSHOT_HEADER_COLUMNS(X) \
-    X(String, source_file, row.source_file) \
-    X(Int32, channel_hint, row.channel_hint) \
     X(Int64, packet_sequence_number, static_cast<int64_t>(row.packet_sequence_number)) \
+    X(Int32, packet_sequence_version, static_cast<int32_t>(row.packet_sequence_version)) \
     X(Int64, packet_sending_time_ns, static_cast<int64_t>(row.packet_sending_time_ns)) \
     X(Int64, security_id, row.security_id) \
     X(Int32, last_msg_seq_num_processed, static_cast<int32_t>(row.last_msg_seq_num_processed)) \
@@ -113,8 +109,6 @@ namespace {
     X(Int64, snapshot_header_row_id, static_cast<int64_t>(row.snapshot_header_row_id))
 
 #define SNAPSHOT_ORDER_COLUMNS(X) \
-    X(String, source_file, row.source_file) \
-    X(Int32, channel_hint, row.channel_hint) \
     X(Int64, snapshot_header_row_id, static_cast<int64_t>(row.snapshot_header_row_id)) \
     X(Int64, security_id, row.security_id) \
     X(String, security_exchange, row.security_exchange) \
@@ -132,9 +126,6 @@ namespace {
     X(Int64, packet_sending_time_ns, static_cast<int64_t>(row.packet_sending_time_ns))
 
 #define INCREMENTAL_ORDER_COLUMNS(X) \
-    X(String, source_file, row.source_file) \
-    X(Int32, channel_hint, row.channel_hint) \
-    X(String, feed_leg, row.feed_leg) \
     X(Int64, security_id, row.security_id) \
     X(Int32, match_event_indicator_raw, static_cast<int32_t>(row.match_event_indicator_raw)) \
     X(Int32, md_update_action_raw, static_cast<int32_t>(row.md_update_action_raw)) \
@@ -151,13 +142,11 @@ namespace {
     X(Int32, rpt_seq, static_cast<int32_t>(row.rpt_seq)) \
     X(Int64, md_entry_timestamp_ns, static_cast<int64_t>(row.md_entry_timestamp_ns)) \
     X(Int64, packet_sequence_number, static_cast<int64_t>(row.packet_sequence_number)) \
+    X(Int32, packet_sequence_version, static_cast<int32_t>(row.packet_sequence_version)) \
     X(Int64, packet_sending_time_ns, static_cast<int64_t>(row.packet_sending_time_ns)) \
     X(Int32, message_index_in_packet, static_cast<int32_t>(row.message_index_in_packet))
 
 #define INCREMENTAL_DELETE_COLUMNS(X) \
-    X(String, source_file, row.source_file) \
-    X(Int32, channel_hint, row.channel_hint) \
-    X(String, feed_leg, row.feed_leg) \
     X(Int64, security_id, row.security_id) \
     X(Int32, match_event_indicator_raw, static_cast<int32_t>(row.match_event_indicator_raw)) \
     X(Int32, md_update_action_raw, static_cast<int32_t>(row.md_update_action_raw)) \
@@ -170,29 +159,26 @@ namespace {
     X(Int64, md_entry_timestamp_ns, static_cast<int64_t>(row.md_entry_timestamp_ns)) \
     X(Int32, rpt_seq, static_cast<int32_t>(row.rpt_seq)) \
     X(Int64, packet_sequence_number, static_cast<int64_t>(row.packet_sequence_number)) \
-    X(Int64, packet_sending_time_ns, static_cast<int64_t>(row.packet_sending_time_ns))
+    X(Int32, packet_sequence_version, static_cast<int32_t>(row.packet_sequence_version)) \
+    X(Int64, packet_sending_time_ns, static_cast<int64_t>(row.packet_sending_time_ns)) \
+    X(Int32, message_index_in_packet, static_cast<int32_t>(row.message_index_in_packet))
 
 #define INCREMENTAL_MASS_DELETE_COLUMNS(X) \
-    X(String, source_file, row.source_file) \
-    X(Int32, channel_hint, row.channel_hint) \
-    X(String, feed_leg, row.feed_leg) \
     X(Int64, security_id, row.security_id) \
     X(Int32, match_event_indicator_raw, static_cast<int32_t>(row.match_event_indicator_raw)) \
     X(Int32, md_update_action_raw, static_cast<int32_t>(row.md_update_action_raw)) \
     X(String, md_update_action, row.md_update_action) \
     X(Int32, md_entry_type_raw, static_cast<int32_t>(row.md_entry_type_raw)) \
     X(String, side, row.side) \
-    X(Int32, start_position, static_cast<int32_t>(row.start_position)) \
-    X(Int32, end_position, static_cast<int32_t>(row.end_position)) \
+    X(Int32, position_no, static_cast<int32_t>(row.position_no)) \
     X(Int32, rpt_seq, static_cast<int32_t>(row.rpt_seq)) \
     X(Int64, md_entry_timestamp_ns, static_cast<int64_t>(row.md_entry_timestamp_ns)) \
     X(Int64, packet_sequence_number, static_cast<int64_t>(row.packet_sequence_number)) \
-    X(Int64, packet_sending_time_ns, static_cast<int64_t>(row.packet_sending_time_ns))
+    X(Int32, packet_sequence_version, static_cast<int32_t>(row.packet_sequence_version)) \
+    X(Int64, packet_sending_time_ns, static_cast<int64_t>(row.packet_sending_time_ns)) \
+    X(Int32, message_index_in_packet, static_cast<int32_t>(row.message_index_in_packet))
 
 #define INCREMENTAL_TRADE_COLUMNS(X) \
-    X(String, source_file, row.source_file) \
-    X(Int32, channel_hint, row.channel_hint) \
-    X(String, feed_leg, row.feed_leg) \
     X(Int64, security_id, row.security_id) \
     X(Int32, match_event_indicator_raw, static_cast<int32_t>(row.match_event_indicator_raw)) \
     X(Int32, trading_session_id, static_cast<int32_t>(row.trading_session_id)) \
@@ -208,31 +194,28 @@ namespace {
     X(Int64, md_entry_timestamp_ns, static_cast<int64_t>(row.md_entry_timestamp_ns)) \
     X(Int32, rpt_seq, static_cast<int32_t>(row.rpt_seq)) \
     X(Int64, packet_sequence_number, static_cast<int64_t>(row.packet_sequence_number)) \
-    X(Int64, packet_sending_time_ns, static_cast<int64_t>(row.packet_sending_time_ns))
+    X(Int32, packet_sequence_version, static_cast<int32_t>(row.packet_sequence_version)) \
+    X(Int64, packet_sending_time_ns, static_cast<int64_t>(row.packet_sending_time_ns)) \
+    X(Int32, message_index_in_packet, static_cast<int32_t>(row.message_index_in_packet))
 
 #define INCREMENTAL_EMPTY_BOOK_COLUMNS(X) \
-    X(String, source_file, row.source_file) \
-    X(Int32, channel_hint, row.channel_hint) \
-    X(String, feed_leg, row.feed_leg) \
     X(Int64, security_id, row.security_id) \
     X(Int32, match_event_indicator_raw, static_cast<int32_t>(row.match_event_indicator_raw)) \
     X(Int64, md_entry_timestamp_ns, static_cast<int64_t>(row.md_entry_timestamp_ns)) \
     X(Int64, packet_sequence_number, static_cast<int64_t>(row.packet_sequence_number)) \
-    X(Int64, packet_sending_time_ns, static_cast<int64_t>(row.packet_sending_time_ns))
+    X(Int32, packet_sequence_version, static_cast<int32_t>(row.packet_sequence_version)) \
+    X(Int64, packet_sending_time_ns, static_cast<int64_t>(row.packet_sending_time_ns)) \
+    X(Int32, message_index_in_packet, static_cast<int32_t>(row.message_index_in_packet))
 
 #define INCREMENTAL_CHANNEL_RESET_COLUMNS(X) \
-    X(String, source_file, row.source_file) \
-    X(Int32, channel_hint, row.channel_hint) \
-    X(String, feed_leg, row.feed_leg) \
     X(Int32, match_event_indicator_raw, static_cast<int32_t>(row.match_event_indicator_raw)) \
     X(Int64, md_entry_timestamp_ns, static_cast<int64_t>(row.md_entry_timestamp_ns)) \
     X(Int64, packet_sequence_number, static_cast<int64_t>(row.packet_sequence_number)) \
-    X(Int64, packet_sending_time_ns, static_cast<int64_t>(row.packet_sending_time_ns))
+    X(Int32, packet_sequence_version, static_cast<int32_t>(row.packet_sequence_version)) \
+    X(Int64, packet_sending_time_ns, static_cast<int64_t>(row.packet_sending_time_ns)) \
+    X(Int32, message_index_in_packet, static_cast<int32_t>(row.message_index_in_packet))
 
 #define INCREMENTAL_OTHER_COLUMNS(X) \
-    X(String, source_file, row.source_file) \
-    X(Int32, channel_hint, row.channel_hint) \
-    X(String, feed_leg, row.feed_leg) \
     X(Int32, template_id, static_cast<int32_t>(row.template_id)) \
     X(String, template_name, row.template_name) \
     X(Int64, security_id, row.security_id) \
@@ -240,7 +223,9 @@ namespace {
     X(Int32, match_event_indicator_raw, static_cast<int32_t>(row.match_event_indicator_raw)) \
     X(Int64, md_entry_timestamp_ns, static_cast<int64_t>(row.md_entry_timestamp_ns)) \
     X(Int64, packet_sequence_number, static_cast<int64_t>(row.packet_sequence_number)) \
+    X(Int32, packet_sequence_version, static_cast<int32_t>(row.packet_sequence_version)) \
     X(Int64, packet_sending_time_ns, static_cast<int64_t>(row.packet_sending_time_ns)) \
+    X(Int32, message_index_in_packet, static_cast<int32_t>(row.message_index_in_packet)) \
     X(String, body_hex, row.body_hex) \
     X(String, decode_status, row.decode_status)
 
@@ -261,6 +246,8 @@ const std::vector<std::string> kAllTables = {
     "instrument_attributes",
     "snapshot_headers",
     "snapshot_orders",
+    "snapshot_other",
+    "instrument_other",
     "incremental_orders",
     "incremental_deletes",
     "incremental_mass_deletes",
@@ -270,6 +257,9 @@ const std::vector<std::string> kAllTables = {
     "incremental_other",
     "errors",
 };
+
+constexpr std::string_view kDecodeStatusOk{"ok"};
+constexpr std::string_view kDecodeStatusUnsupported{"unsupported_template"};
 
 #define APPLY_SCHEMA_FIELD(type, name, expr) fields.push_back(Make##type##Column(#name));
 
@@ -368,8 +358,18 @@ double scale_decimal(std::int64_t mantissa, std::int8_t exponent) {
     if (mantissa == std::numeric_limits<std::int64_t>::min()) {
         return std::numeric_limits<double>::quiet_NaN();
     }
-    double scale = std::pow(10.0, static_cast<double>(exponent));
-    return static_cast<double>(mantissa) * scale;
+    switch (exponent) {
+        case -4:
+            return static_cast<double>(mantissa) * 1e-4;
+        case -7:
+            return static_cast<double>(mantissa) * 1e-7;
+        case -8:
+            return static_cast<double>(mantissa) * 1e-8;
+        default: {
+            const double scale = std::pow(10.0, static_cast<double>(exponent));
+            return static_cast<double>(mantissa) * scale;
+        }
+    }
 }
 
 const char *side_from_md_entry_type(sbe_types::MDEntryType::Value v) {
@@ -383,10 +383,10 @@ const char *side_from_md_entry_type(sbe_types::MDEntryType::Value v) {
     }
 }
 
-std::string update_action_name(sbe_types::MDUpdateAction::Value v) {
+const char *update_action_name(sbe_types::MDUpdateAction::Value v) {
     switch (v) {
         case sbe_types::MDUpdateAction::Value::NEW:
-            return "add";
+            return "new";
         case sbe_types::MDUpdateAction::Value::CHANGE:
             return "change";
         case sbe_types::MDUpdateAction::Value::DELETE:
@@ -406,14 +406,20 @@ constexpr std::uint16_t kExpectedSchemaId = sbe_types::MessageHeader::sbeSchemaI
 constexpr std::uint16_t kExpectedSchemaVersion = sbe_types::MessageHeader::sbeSchemaVersion();
 constexpr std::uint16_t kExpectedEncodingType = 0xeb50;
 
-std::string template_name(std::uint16_t template_id) {
+const char *template_name_literal(std::uint16_t template_id) {
     switch (template_id) {
+        case 1:
+            return "SequenceReset_1";
         case 9:
             return "EmptyBook_9";
         case 11:
             return "ChannelReset_11";
         case 12:
             return "SecurityDefinition_12";
+        case 13:
+            return "SecurityStatus_3";
+        case 17:
+            return "SecurityGroupPhase_10";
         case 30:
             return "SnapshotFullRefresh_Header_30";
         case 50:
@@ -424,10 +430,14 @@ std::string template_name(std::uint16_t template_id) {
             return "MassDeleteOrders_MBO_52";
         case 53:
             return "Trade_53";
+        case 54:
+            return "ExecutionSummary_54";
+        case 56:
+            return "ExecutionStatistics_56";
         case 71:
             return "SnapshotFullRefresh_Orders_MBO_71";
         default:
-            return "unknown";
+            return nullptr;
     }
 }
 
@@ -496,9 +506,40 @@ std::unordered_map<std::string, std::int64_t> NativeDecoder::parse_files(
     const std::vector<std::filesystem::path> &files, const OutputOptions &output) {
     std::vector<FileMetadata> metas;
     metas.reserve(files.size());
+    std::unordered_map<std::int32_t, std::vector<FileMetadata>> by_channel;
     for (const auto &p : files) {
-        metas.push_back(infer_file_metadata(p));
+        auto meta = infer_file_metadata(p);
+        by_channel[meta.channel_hint].push_back(meta);
+        metas.push_back(std::move(meta));
     }
+
+    if (by_channel.size() <= 1 || files.size() <= 1) {
+        return parse_files_sequential(metas, output);
+    }
+
+    std::vector<std::future<std::unordered_map<std::string, std::int64_t>>> futures;
+    futures.reserve(by_channel.size());
+    for (auto &kv : by_channel) {
+        auto channel_metas = kv.second;
+        futures.emplace_back(std::async(std::launch::async, [this, channel_metas, output]() mutable {
+            NativeDecoder worker(options_);
+            return worker.parse_files_sequential(channel_metas, output);
+        }));
+    }
+
+    std::unordered_map<std::string, std::int64_t> totals;
+    for (auto &fut : futures) {
+        auto partial = fut.get();
+        for (auto &[name, count] : partial) {
+            totals[name] += count;
+        }
+    }
+    row_counts_ = totals;
+    return totals;
+}
+
+std::unordered_map<std::string, std::int64_t> NativeDecoder::parse_files_sequential(
+    const std::vector<FileMetadata> &metas, const OutputOptions &output) {
     open_writers(output);
     for (const auto &meta : metas) {
         parse_one(meta);
@@ -518,159 +559,68 @@ void NativeDecoder::open_writers(const OutputOptions &output)
         enabled_tables_.insert(current_output_.tables.begin(), current_output_.tables.end());
     }
     row_counts_.clear();
-
-    if (should_emit("instruments")) {
-        instruments_writer_ = std::make_unique<TableStreamWriter<InstrumentRow>>(current_output_.output_dir,
-                                                                                "instruments",
-                                                                                MakeInstrumentSchema(),
-                                                                                WriteInstrument);
-        row_counts_["instruments"] = 0;
-    } else {
-        instruments_writer_.reset();
-    }
-
-    if (should_emit("instrument_underlyings")) {
-        instrument_underlyings_writer_ =
-            std::make_unique<TableStreamWriter<InstrumentUnderlyingRow>>(current_output_.output_dir,
-                                                                         "instrument_underlyings",
-                                                                         MakeInstrumentUnderlyingsSchema(),
-                                                                         WriteInstrumentUnderlyings);
-        row_counts_["instrument_underlyings"] = 0;
-    } else {
-        instrument_underlyings_writer_.reset();
-    }
-
-    if (should_emit("instrument_legs")) {
-        instrument_legs_writer_ =
-            std::make_unique<TableStreamWriter<InstrumentLegRow>>(current_output_.output_dir, "instrument_legs",
-                                                                  MakeInstrumentLegsSchema(), WriteInstrumentLegs);
-        row_counts_["instrument_legs"] = 0;
-    } else {
-        instrument_legs_writer_.reset();
-    }
-
-    if (should_emit("instrument_attributes")) {
-        instrument_attributes_writer_ = std::make_unique<TableStreamWriter<InstrumentAttributeRow>>(
-            current_output_.output_dir, "instrument_attributes", MakeInstrumentAttributesSchema(),
-            WriteInstrumentAttributes);
-        row_counts_["instrument_attributes"] = 0;
-    } else {
-        instrument_attributes_writer_.reset();
-    }
-
-    if (should_emit("snapshot_headers")) {
-        snapshot_headers_writer_ = std::make_unique<TableStreamWriter<SnapshotHeaderRow>>(
-            current_output_.output_dir, "snapshot_headers", MakeSnapshotHeadersSchema(), WriteSnapshotHeaders);
-        row_counts_["snapshot_headers"] = 0;
-    } else {
-        snapshot_headers_writer_.reset();
-    }
-
-    if (should_emit("snapshot_orders")) {
-        snapshot_orders_writer_ = std::make_unique<TableStreamWriter<SnapshotOrderRow>>(
-            current_output_.output_dir, "snapshot_orders", MakeSnapshotOrdersSchema(), WriteSnapshotOrders);
-        row_counts_["snapshot_orders"] = 0;
-    } else {
-        snapshot_orders_writer_.reset();
-    }
-
-    if (should_emit("incremental_orders")) {
-        incremental_orders_writer_ = std::make_unique<TableStreamWriter<IncrementalOrderRow>>(
-            current_output_.output_dir, "incremental_orders", MakeIncrementalOrdersSchema(), WriteIncrementalOrders);
-        row_counts_["incremental_orders"] = 0;
-    } else {
-        incremental_orders_writer_.reset();
-    }
-
-    if (should_emit("incremental_deletes")) {
-        incremental_deletes_writer_ = std::make_unique<TableStreamWriter<IncrementalDeleteRow>>(
-            current_output_.output_dir, "incremental_deletes", MakeIncrementalDeletesSchema(),
-            WriteIncrementalDeletes);
-        row_counts_["incremental_deletes"] = 0;
-    } else {
-        incremental_deletes_writer_.reset();
-    }
-
-    if (should_emit("incremental_mass_deletes")) {
-        incremental_mass_deletes_writer_ = std::make_unique<TableStreamWriter<IncrementalMassDeleteRow>>(
-            current_output_.output_dir, "incremental_mass_deletes", MakeIncrementalMassDeletesSchema(),
-            WriteIncrementalMassDeletes);
-        row_counts_["incremental_mass_deletes"] = 0;
-    } else {
-        incremental_mass_deletes_writer_.reset();
-    }
-
-    if (should_emit("incremental_trades")) {
-        incremental_trades_writer_ = std::make_unique<TableStreamWriter<IncrementalTradeRow>>(
-            current_output_.output_dir, "incremental_trades", MakeIncrementalTradesSchema(), WriteIncrementalTrades);
-        row_counts_["incremental_trades"] = 0;
-    } else {
-        incremental_trades_writer_.reset();
-    }
-
-    if (should_emit("incremental_empty_books")) {
-        incremental_empty_books_writer_ = std::make_unique<TableStreamWriter<EmptyBookRow>>(
-            current_output_.output_dir, "incremental_empty_books", MakeIncrementalEmptyBooksSchema(),
-            WriteIncrementalEmptyBooks);
-        row_counts_["incremental_empty_books"] = 0;
-    } else {
-        incremental_empty_books_writer_.reset();
-    }
-
-    if (should_emit("incremental_channel_resets")) {
-        incremental_channel_resets_writer_ = std::make_unique<TableStreamWriter<ChannelResetRow>>(
-            current_output_.output_dir, "incremental_channel_resets", MakeIncrementalChannelResetsSchema(),
-            WriteIncrementalChannelResets);
-        row_counts_["incremental_channel_resets"] = 0;
-    } else {
-        incremental_channel_resets_writer_.reset();
-    }
-
-    if (should_emit("incremental_other")) {
-        incremental_other_writer_ = std::make_unique<TableStreamWriter<IncrementalOtherRow>>(
-            current_output_.output_dir, "incremental_other", MakeIncrementalOtherSchema(), WriteIncrementalOther);
-        row_counts_["incremental_other"] = 0;
-    } else {
-        incremental_other_writer_.reset();
-    }
-
-    if (should_emit("errors")) {
-        errors_writer_ = std::make_unique<TableStreamWriter<ErrorRow>>(current_output_.output_dir, "errors",
-                                                                      MakeErrorsSchema(), WriteErrors);
-        row_counts_["errors"] = 0;
-    } else {
-        errors_writer_.reset();
-    }
+    instruments_writers_.clear();
+    instrument_underlyings_writers_.clear();
+    instrument_legs_writers_.clear();
+    instrument_attributes_writers_.clear();
+    snapshot_headers_writers_.clear();
+    snapshot_orders_writers_.clear();
+    snapshot_other_writers_.clear();
+    instrument_other_writers_.clear();
+    incremental_orders_writers_.clear();
+    incremental_deletes_writers_.clear();
+    incremental_mass_deletes_writers_.clear();
+    incremental_trades_writers_.clear();
+    incremental_empty_books_writers_.clear();
+    incremental_channel_resets_writers_.clear();
+    incremental_other_writers_.clear();
+    errors_writers_.clear();
+    channel_dirs_.clear();
+    feed_dirs_.clear();
     snapshot_header_row_id_ = 1;
     last_snapshot_row_for_security_.clear();
 }
 
 void NativeDecoder::close_writers()
 {
-    auto finalize = [&](const std::string &name, auto &writer) {
-        if (writer) {
-            writer->Close();
-            row_counts_[name] = writer->rows();
-            writer.reset();
-        } else if (should_emit(name) && !row_counts_.count(name)) {
-            row_counts_[name] = 0;
+    auto finalize_channel = [&](const std::string &name, auto &map) {
+        if (!should_emit(name)) {
+            map.clear();
+            if (!row_counts_.count(name)) {
+                row_counts_[name] = 0;
+            }
+            return;
         }
+        std::int64_t total = 0;
+        for (auto &entry : map) {
+            if (entry.second) {
+                entry.second->Close();
+                total += entry.second->rows();
+            }
+        }
+        row_counts_[name] = total;
+        map.clear();
     };
 
-    finalize("instruments", instruments_writer_);
-    finalize("instrument_underlyings", instrument_underlyings_writer_);
-    finalize("instrument_legs", instrument_legs_writer_);
-    finalize("instrument_attributes", instrument_attributes_writer_);
-    finalize("snapshot_headers", snapshot_headers_writer_);
-    finalize("snapshot_orders", snapshot_orders_writer_);
-    finalize("incremental_orders", incremental_orders_writer_);
-    finalize("incremental_deletes", incremental_deletes_writer_);
-    finalize("incremental_mass_deletes", incremental_mass_deletes_writer_);
-    finalize("incremental_trades", incremental_trades_writer_);
-    finalize("incremental_empty_books", incremental_empty_books_writer_);
-    finalize("incremental_channel_resets", incremental_channel_resets_writer_);
-    finalize("incremental_other", incremental_other_writer_);
-    finalize("errors", errors_writer_);
+    auto finalize_feed = finalize_channel;
+
+    finalize_channel("instruments", instruments_writers_);
+    finalize_channel("instrument_underlyings", instrument_underlyings_writers_);
+    finalize_channel("instrument_legs", instrument_legs_writers_);
+    finalize_channel("instrument_attributes", instrument_attributes_writers_);
+    finalize_channel("snapshot_headers", snapshot_headers_writers_);
+    finalize_channel("snapshot_orders", snapshot_orders_writers_);
+    finalize_channel("snapshot_other", snapshot_other_writers_);
+    finalize_channel("instrument_other", instrument_other_writers_);
+    finalize_feed("incremental_orders", incremental_orders_writers_);
+    finalize_feed("incremental_deletes", incremental_deletes_writers_);
+    finalize_feed("incremental_mass_deletes", incremental_mass_deletes_writers_);
+    finalize_feed("incremental_trades", incremental_trades_writers_);
+    finalize_feed("incremental_empty_books", incremental_empty_books_writers_);
+    finalize_feed("incremental_channel_resets", incremental_channel_resets_writers_);
+    finalize_feed("incremental_other", incremental_other_writers_);
+
+    finalize_channel("errors", errors_writers_);
 }
 
 bool NativeDecoder::should_emit(const std::string &table) const
@@ -683,7 +633,9 @@ void NativeDecoder::log_error(const FileMetadata &meta, const std::string &stage
                               std::uint16_t template_id, const std::string &code,
                               const std::string &text, const std::string &raw_hex)
 {
-    if (!errors_writer_) {
+    auto *writer = get_channel_writer(errors_writers_, meta.channel_hint, "errors",
+                                      MakeErrorsSchema, WriteErrors);
+    if (!writer) {
         return;
     }
     ErrorRow row;
@@ -695,7 +647,51 @@ void NativeDecoder::log_error(const FileMetadata &meta, const std::string &stage
     row.error_code = code;
     row.error_text = text;
     row.raw_context_hex = raw_hex;
-    errors_writer_->Append(row);
+    writer->Append(row);
+}
+
+std::filesystem::path NativeDecoder::channel_path(std::int32_t channel)
+{
+    auto it = channel_dirs_.find(channel);
+    if (it != channel_dirs_.end()) {
+        return it->second;
+    }
+    std::ostringstream oss;
+    oss << "channel_" << channel;
+    auto dir = current_output_.output_dir / oss.str();
+    std::filesystem::create_directories(dir);
+    auto [inserted, _] = channel_dirs_.emplace(channel, dir);
+    return inserted->second;
+}
+
+std::filesystem::path NativeDecoder::feed_path(std::int32_t channel, const std::string &feed)
+{
+    std::string normalized = feed;
+    if (normalized.empty() || normalized == "-") {
+        normalized = "unknown";
+    }
+    FeedKey key{channel, normalized};
+    auto it = feed_dirs_.find(key);
+    if (it != feed_dirs_.end()) {
+        return it->second;
+    }
+    auto dir = channel_path(channel);
+    dir /= "feed_" + normalized;
+    std::filesystem::create_directories(dir);
+    auto [inserted, _] = feed_dirs_.emplace(std::move(key), dir);
+    return inserted->second;
+}
+
+std::shared_ptr<parquet::schema::GroupNode> NativeDecoder::schema_for(const std::string &table,
+                                                                      SchemaFactory factory)
+{
+    auto it = schema_cache_.find(table);
+    if (it != schema_cache_.end()) {
+        return it->second;
+    }
+    auto schema = factory();
+    auto [inserted, _] = schema_cache_.emplace(table, schema);
+    return inserted->second;
 }
 
 struct UdpPayloadView {
@@ -774,7 +770,6 @@ void decode_security_definition(const MessageContext &ctx,
                                 TableStreamWriter<InstrumentUnderlyingRow> *underlyings_writer,
                                 TableStreamWriter<InstrumentAttributeRow> *attributes_writer) {
     InstrumentRow row{};
-    row.source_file = ctx.meta->source_file;
     row.packet_sequence_number = ctx.packet_row->packet_sequence_number;
     row.packet_sending_time_ns = ctx.packet_row->packet_sending_time_ns;
     row.security_id = static_cast<std::int64_t>(msg.securityID());
@@ -815,7 +810,6 @@ void decode_security_definition(const MessageContext &ctx,
     auto underlyings_group = msg.noUnderlyings();
     underlyings_group.forEach([&](sbe_types::SecurityDefinition_12::NoUnderlyings &underlying) {
         InstrumentUnderlyingRow underlying_row{};
-        underlying_row.source_file = ctx.meta->source_file;
         underlying_row.security_id = row.security_id;
         underlying_row.packet_sequence_number = row.packet_sequence_number;
         underlying_row.underlying_security_id = underlying.underlyingSecurityID();
@@ -831,7 +825,6 @@ void decode_security_definition(const MessageContext &ctx,
     auto leg_group = msg.noLegs();
     leg_group.forEach([&](sbe_types::SecurityDefinition_12::NoLegs &leg) {
         InstrumentLegRow leg_row{};
-        leg_row.source_file = ctx.meta->source_file;
         leg_row.security_id = row.security_id;
         leg_row.packet_sequence_number = row.packet_sequence_number;
         leg_row.leg_security_id = leg.legSecurityID();
@@ -860,7 +853,6 @@ void decode_security_definition(const MessageContext &ctx,
     auto attributes_group = msg.noInstrAttribs();
     attributes_group.forEach([&](sbe_types::SecurityDefinition_12::NoInstrAttribs &attr) {
         InstrumentAttributeRow attr_row{};
-        attr_row.source_file = ctx.meta->source_file;
         attr_row.security_id = row.security_id;
         attr_row.packet_sequence_number = row.packet_sequence_number;
         attr_row.attribute_type = attr.instrAttribTypeRaw();
@@ -889,9 +881,8 @@ void decode_snapshot_header(const MessageContext &ctx,
                             std::uint64_t &next_row_id,
                             std::unordered_map<std::int64_t, std::uint64_t> &row_map) {
     SnapshotHeaderRow row{};
-    row.source_file = ctx.meta->source_file;
-    row.channel_hint = ctx.meta->channel_hint;
     row.packet_sequence_number = ctx.packet_row->packet_sequence_number;
+    row.packet_sequence_version = ctx.packet_row->packet_sequence_version;
     row.packet_sending_time_ns = ctx.packet_row->packet_sending_time_ns;
     row.security_id = msg.securityID();
     row.last_msg_seq_num_processed = msg.lastMsgSeqNumProcessed();
@@ -918,8 +909,6 @@ void decode_snapshot_orders(const MessageContext &ctx,
     }
     group.forEach([&](sbe_types::SnapshotFullRefresh_Orders_MBO_71::NoMDEntries &entry) {
         SnapshotOrderRow row{};
-        row.source_file = ctx.meta->source_file;
-        row.channel_hint = ctx.meta->channel_hint;
         row.snapshot_header_row_id = header_row_id;
         row.security_id = msg.securityID();
         row.security_exchange = msg.getSecurityExchangeAsString();
@@ -945,9 +934,6 @@ void decode_snapshot_orders(const MessageContext &ctx,
 IncrementalOrderRow make_incremental_order_row(const MessageContext &ctx,
                                                sbe_types::Order_MBO_50 &msg) {
     IncrementalOrderRow row{};
-    row.source_file = ctx.meta->source_file;
-    row.channel_hint = ctx.meta->channel_hint;
-    row.feed_leg = ctx.meta->feed_leg;
     row.security_id = msg.securityID();
     row.match_event_indicator_raw = msg.matchEventIndicator().rawValue();
     row.md_update_action_raw = msg.mDUpdateActionRaw();
@@ -965,6 +951,7 @@ IncrementalOrderRow make_incremental_order_row(const MessageContext &ctx,
     row.rpt_seq = msg.rptSeq();
     row.md_entry_timestamp_ns = msg.mDEntryTimestamp().time();
     row.packet_sequence_number = ctx.packet_row->packet_sequence_number;
+    row.packet_sequence_version = ctx.packet_row->packet_sequence_version;
     row.packet_sending_time_ns = ctx.packet_row->packet_sending_time_ns;
     row.message_index_in_packet = ctx.message_index;
     return row;
@@ -973,9 +960,6 @@ IncrementalOrderRow make_incremental_order_row(const MessageContext &ctx,
 IncrementalDeleteRow make_incremental_delete_row(const MessageContext &ctx,
                                                  sbe_types::DeleteOrder_MBO_51 &msg) {
     IncrementalDeleteRow row{};
-    row.source_file = ctx.meta->source_file;
-    row.channel_hint = ctx.meta->channel_hint;
-    row.feed_leg = ctx.meta->feed_leg;
     row.security_id = msg.securityID();
     row.match_event_indicator_raw = msg.matchEventIndicator().rawValue();
     row.md_update_action_raw = msg.mDUpdateActionRaw();
@@ -989,16 +973,15 @@ IncrementalDeleteRow make_incremental_delete_row(const MessageContext &ctx,
     row.md_entry_timestamp_ns = msg.mDEntryTimestamp().time();
     row.rpt_seq = msg.rptSeq();
     row.packet_sequence_number = ctx.packet_row->packet_sequence_number;
+    row.packet_sequence_version = ctx.packet_row->packet_sequence_version;
     row.packet_sending_time_ns = ctx.packet_row->packet_sending_time_ns;
+    row.message_index_in_packet = ctx.message_index;
     return row;
 }
 
 IncrementalMassDeleteRow make_mass_delete_row(const MessageContext &ctx,
                                               sbe_types::MassDeleteOrders_MBO_52 &msg) {
     IncrementalMassDeleteRow row{};
-    row.source_file = ctx.meta->source_file;
-    row.channel_hint = ctx.meta->channel_hint;
-    row.feed_leg = ctx.meta->feed_leg;
     row.security_id = msg.securityID();
     row.match_event_indicator_raw = msg.matchEventIndicator().rawValue();
     row.md_update_action_raw = msg.mDUpdateActionRaw();
@@ -1006,21 +989,18 @@ IncrementalMassDeleteRow make_mass_delete_row(const MessageContext &ctx,
     const auto entry_type = msg.mDEntryType();
     row.md_entry_type_raw = static_cast<std::uint8_t>(entry_type);
     row.side = side_from_md_entry_type(entry_type);
-    row.start_position = msg.mDEntryPositionNo();
-    row.end_position =
-        msg.mDUpdateAction() == sbe_types::MDUpdateAction::Value::DELETE_THRU ? row.start_position : 0;
+    row.position_no = msg.mDEntryPositionNo();
     row.md_entry_timestamp_ns = msg.mDEntryTimestamp().time();
     row.rpt_seq = msg.rptSeq();
     row.packet_sequence_number = ctx.packet_row->packet_sequence_number;
+    row.packet_sequence_version = ctx.packet_row->packet_sequence_version;
     row.packet_sending_time_ns = ctx.packet_row->packet_sending_time_ns;
+    row.message_index_in_packet = ctx.message_index;
     return row;
 }
 
 IncrementalTradeRow make_trade_row(const MessageContext &ctx, sbe_types::Trade_53 &msg) {
     IncrementalTradeRow row{};
-    row.source_file = ctx.meta->source_file;
-    row.channel_hint = ctx.meta->channel_hint;
-    row.feed_leg = ctx.meta->feed_leg;
     row.security_id = msg.securityID();
     row.match_event_indicator_raw = msg.matchEventIndicator().rawValue();
     row.trading_session_id = msg.tradingSessionIDRaw();
@@ -1036,50 +1016,54 @@ IncrementalTradeRow make_trade_row(const MessageContext &ctx, sbe_types::Trade_5
     row.md_entry_timestamp_ns = msg.mDEntryTimestamp().time();
     row.rpt_seq = msg.rptSeq();
     row.packet_sequence_number = ctx.packet_row->packet_sequence_number;
+    row.packet_sequence_version = ctx.packet_row->packet_sequence_version;
     row.packet_sending_time_ns = ctx.packet_row->packet_sending_time_ns;
+    row.message_index_in_packet = ctx.message_index;
     return row;
 }
 
 IncrementalOtherRow base_incremental_other_row(const MessageContext &ctx, std::uint16_t template_id,
-                                               std::string template_title, const std::uint8_t *body,
+                                               const char *template_title_literal, const std::uint8_t *body,
                                                std::uint32_t body_length) {
     IncrementalOtherRow row{};
-    row.source_file = ctx.meta->source_file;
-    row.channel_hint = ctx.meta->channel_hint;
-    row.feed_leg = ctx.meta->feed_leg;
     row.template_id = template_id;
-    row.template_name = std::move(template_title);
+    if (template_title_literal != nullptr) {
+        row.template_name = template_title_literal;
+    } else {
+        row.template_name_storage = "unknown_" + std::to_string(template_id);
+        row.template_name = row.template_name_storage;
+    }
     row.packet_sequence_number = ctx.packet_row->packet_sequence_number;
+    row.packet_sequence_version = ctx.packet_row->packet_sequence_version;
     row.packet_sending_time_ns = ctx.packet_row->packet_sending_time_ns;
+    row.message_index_in_packet = ctx.message_index;
     if (body != nullptr && body_length > 0) {
         row.body_hex = bytes_to_hex(body, body_length);
     }
-    row.decode_status = "ok";
+    row.decode_status = kDecodeStatusOk;
     return row;
 }
 
 EmptyBookRow make_empty_book_row(const MessageContext &ctx, sbe_types::EmptyBook_9 &msg) {
     EmptyBookRow row{};
-    row.source_file = ctx.meta->source_file;
-    row.channel_hint = ctx.meta->channel_hint;
-    row.feed_leg = ctx.meta->feed_leg;
     row.security_id = static_cast<std::int64_t>(msg.securityID());
     row.match_event_indicator_raw = msg.matchEventIndicator().rawValue();
     row.md_entry_timestamp_ns = msg.mDEntryTimestamp().time();
     row.packet_sequence_number = ctx.packet_row->packet_sequence_number;
+    row.packet_sequence_version = ctx.packet_row->packet_sequence_version;
     row.packet_sending_time_ns = ctx.packet_row->packet_sending_time_ns;
+    row.message_index_in_packet = ctx.message_index;
     return row;
 }
 
 ChannelResetRow make_channel_reset_row(const MessageContext &ctx, sbe_types::ChannelReset_11 &msg) {
     ChannelResetRow row{};
-    row.source_file = ctx.meta->source_file;
-    row.channel_hint = ctx.meta->channel_hint;
-    row.feed_leg = ctx.meta->feed_leg;
     row.match_event_indicator_raw = msg.matchEventIndicator().rawValue();
     row.md_entry_timestamp_ns = msg.mDEntryTimestamp().time();
     row.packet_sequence_number = ctx.packet_row->packet_sequence_number;
+    row.packet_sequence_version = ctx.packet_row->packet_sequence_version;
     row.packet_sending_time_ns = ctx.packet_row->packet_sending_time_ns;
+    row.message_index_in_packet = ctx.message_index;
     return row;
 }
 
@@ -1094,10 +1078,7 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
     std::uint64_t packet_index = 0;
     while (reader.next(packet)) {
         PacketRow packet_row{};
-        packet_row.source_file = meta.source_file;
         packet_row.channel_hint_from_filename = meta.channel_hint;
-        packet_row.stream_kind = meta.stream_kind;
-        packet_row.feed_leg = meta.feed_leg;
         packet_row.packet_index_in_file = packet_index;
         packet_row.pcap_ts_ns = packet.timestamp_ns;
         packet_row.udp_payload_len = packet.length;
@@ -1203,18 +1184,33 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                             sbe_types::SecurityDefinition_12 msg_wrapper;
                             msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
                                                       block_length, schema_version, sbe_buffer);
-                            decode_security_definition(msg_ctx, msg_wrapper, instruments_writer_.get(),
-                                                        instrument_legs_writer_.get(),
-                                                        instrument_underlyings_writer_.get(),
-                                                        instrument_attributes_writer_.get());
+                            auto *instrument_writer = get_channel_writer(instruments_writers_, meta.channel_hint,
+                                                                        "instruments", MakeInstrumentSchema,
+                                                                        WriteInstrument);
+                            auto *legs_writer = get_channel_writer(instrument_legs_writers_, meta.channel_hint,
+                                                                   "instrument_legs",
+                                                                   MakeInstrumentLegsSchema, WriteInstrumentLegs);
+                            auto *under_writer = get_channel_writer(instrument_underlyings_writers_,
+                                                                     meta.channel_hint, "instrument_underlyings",
+                                                                     MakeInstrumentUnderlyingsSchema,
+                                                                     WriteInstrumentUnderlyings);
+                            auto *attr_writer = get_channel_writer(instrument_attributes_writers_,
+                                                                  meta.channel_hint, "instrument_attributes",
+                                                                  MakeInstrumentAttributesSchema,
+                                                                  WriteInstrumentAttributes);
+                            decode_security_definition(msg_ctx, msg_wrapper, instrument_writer, legs_writer,
+                                                       under_writer, attr_writer);
                             break;
                         }
                         case sbe_types::SnapshotFullRefresh_Header_30::sbeTemplateId(): {
                             sbe_types::SnapshotFullRefresh_Header_30 msg_wrapper;
                             msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
                                                       block_length, schema_version, sbe_buffer);
-                            decode_snapshot_header(msg_ctx, msg_wrapper, snapshot_headers_writer_.get(),
-                                                   snapshot_header_row_id_,
+                            auto *headers_writer = get_channel_writer(snapshot_headers_writers_, meta.channel_hint,
+                                                                       "snapshot_headers",
+                                                                       MakeSnapshotHeadersSchema,
+                                                                       WriteSnapshotHeaders);
+                            decode_snapshot_header(msg_ctx, msg_wrapper, headers_writer, snapshot_header_row_id_,
                                                    last_snapshot_row_for_security_);
                             break;
                         }
@@ -1222,7 +1218,11 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                             sbe_types::SnapshotFullRefresh_Orders_MBO_71 msg_wrapper;
                             msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
                                                       block_length, schema_version, sbe_buffer);
-                            decode_snapshot_orders(msg_ctx, msg_wrapper, snapshot_orders_writer_.get(),
+                            auto *orders_writer = get_channel_writer(snapshot_orders_writers_, meta.channel_hint,
+                                                                     "snapshot_orders",
+                                                                     MakeSnapshotOrdersSchema,
+                                                                     WriteSnapshotOrders);
+                            decode_snapshot_orders(msg_ctx, msg_wrapper, orders_writer,
                                                    last_snapshot_row_for_security_);
                             break;
                         }
@@ -1230,8 +1230,12 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                             sbe_types::EmptyBook_9 msg_wrapper;
                             msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
                                                       block_length, schema_version, sbe_buffer);
-                            if (incremental_empty_books_writer_) {
-                                incremental_empty_books_writer_->Append(make_empty_book_row(msg_ctx, msg_wrapper));
+                            auto *writer = get_feed_writer(incremental_empty_books_writers_, meta.channel_hint,
+                                                           meta.feed_leg, "incremental_empty_books",
+                                                           MakeIncrementalEmptyBooksSchema,
+                                                           WriteIncrementalEmptyBooks);
+                            if (writer) {
+                                writer->Append(make_empty_book_row(msg_ctx, msg_wrapper));
                             }
                             break;
                         }
@@ -1239,9 +1243,12 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                             sbe_types::ChannelReset_11 msg_wrapper;
                             msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
                                                       block_length, schema_version, sbe_buffer);
-                            if (incremental_channel_resets_writer_) {
-                                incremental_channel_resets_writer_->Append(
-                                    make_channel_reset_row(msg_ctx, msg_wrapper));
+                            auto *writer = get_feed_writer(incremental_channel_resets_writers_, meta.channel_hint,
+                                                           meta.feed_leg, "incremental_channel_resets",
+                                                           MakeIncrementalChannelResetsSchema,
+                                                           WriteIncrementalChannelResets);
+                            if (writer) {
+                                writer->Append(make_channel_reset_row(msg_ctx, msg_wrapper));
                             }
                             break;
                         }
@@ -1249,8 +1256,11 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                             sbe_types::Order_MBO_50 msg_wrapper;
                             msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
                                                       block_length, schema_version, sbe_buffer);
-                            if (incremental_orders_writer_) {
-                                incremental_orders_writer_->Append(make_incremental_order_row(msg_ctx, msg_wrapper));
+                            auto *writer = get_feed_writer(incremental_orders_writers_, meta.channel_hint,
+                                                           meta.feed_leg, "incremental_orders",
+                                                           MakeIncrementalOrdersSchema, WriteIncrementalOrders);
+                            if (writer) {
+                                writer->Append(make_incremental_order_row(msg_ctx, msg_wrapper));
                             }
                             break;
                         }
@@ -1258,9 +1268,11 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                             sbe_types::DeleteOrder_MBO_51 msg_wrapper;
                             msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
                                                       block_length, schema_version, sbe_buffer);
-                            if (incremental_deletes_writer_) {
-                                incremental_deletes_writer_->Append(
-                                    make_incremental_delete_row(msg_ctx, msg_wrapper));
+                            auto *writer = get_feed_writer(incremental_deletes_writers_, meta.channel_hint,
+                                                           meta.feed_leg, "incremental_deletes",
+                                                           MakeIncrementalDeletesSchema, WriteIncrementalDeletes);
+                            if (writer) {
+                                writer->Append(make_incremental_delete_row(msg_ctx, msg_wrapper));
                             }
                             break;
                         }
@@ -1268,9 +1280,12 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                             sbe_types::MassDeleteOrders_MBO_52 msg_wrapper;
                             msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
                                                       block_length, schema_version, sbe_buffer);
-                            if (incremental_mass_deletes_writer_) {
-                                incremental_mass_deletes_writer_->Append(
-                                    make_mass_delete_row(msg_ctx, msg_wrapper));
+                            auto *writer = get_feed_writer(incremental_mass_deletes_writers_, meta.channel_hint,
+                                                           meta.feed_leg, "incremental_mass_deletes",
+                                                           MakeIncrementalMassDeletesSchema,
+                                                           WriteIncrementalMassDeletes);
+                            if (writer) {
+                                writer->Append(make_mass_delete_row(msg_ctx, msg_wrapper));
                             }
                             break;
                         }
@@ -1278,19 +1293,36 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                             sbe_types::Trade_53 msg_wrapper;
                             msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
                                                       block_length, schema_version, sbe_buffer);
-                            if (incremental_trades_writer_) {
-                                incremental_trades_writer_->Append(make_trade_row(msg_ctx, msg_wrapper));
+                            auto *writer = get_feed_writer(incremental_trades_writers_, meta.channel_hint,
+                                                           meta.feed_leg, "incremental_trades",
+                                                           MakeIncrementalTradesSchema, WriteIncrementalTrades);
+                            if (writer) {
+                                writer->Append(make_trade_row(msg_ctx, msg_wrapper));
                             }
                             break;
                         }
                         default: {
-                            if (incremental_other_writer_) {
+                            TableStreamWriter<IncrementalOtherRow> *writer = nullptr;
+                            if (meta.stream_kind == "Snapshot") {
+                                writer = get_channel_writer(snapshot_other_writers_, meta.channel_hint,
+                                                            "snapshot_other", MakeIncrementalOtherSchema,
+                                                            WriteIncrementalOther);
+                            } else if (meta.stream_kind == "Instrument") {
+                                writer = get_channel_writer(instrument_other_writers_, meta.channel_hint,
+                                                            "instrument_other", MakeIncrementalOtherSchema,
+                                                            WriteIncrementalOther);
+                            } else {
+                                writer = get_feed_writer(incremental_other_writers_, meta.channel_hint,
+                                                         meta.feed_leg, "incremental_other",
+                                                         MakeIncrementalOtherSchema, WriteIncrementalOther);
+                            }
+                            if (writer) {
                                 const auto body_bytes = reinterpret_cast<const std::uint8_t *>(message_body);
-                                auto row = base_incremental_other_row(msg_ctx, template_id,
-                                                                      template_name(template_id), body_bytes,
-                                                                      body_length);
-                                row.decode_status = "unsupported_template";
-                                incremental_other_writer_->Append(row);
+                                const char *template_title = template_name_literal(template_id);
+                                auto row = base_incremental_other_row(msg_ctx, template_id, template_title,
+                                                                      body_bytes, body_length);
+                                row.decode_status = kDecodeStatusUnsupported;
+                                writer->Append(row);
                             }
                             break;
                         }

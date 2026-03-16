@@ -5,12 +5,12 @@
 
 ## 1. Предварительные требования
 
-- Python 3.12+ с `pip` — используем для вспомогательных CLI (`click`) и
-  библиотек `pyarrow`, `dpkt`.
+- Python 3.12+ с `pip` — используется и для CLI, и для самого orderbook-пайплайна.
+  Базовые библиотеки: `click`, `pyarrow`, `pandas`, `tqdm`.
 - CMake ≥ 3.23, Ninja (или другой поддерживаемый генератор) и компилятор с
-  поддержкой C++20.
-- Локальный JDK (`third_party/jdk-21.0.2+13`) — гоняем через него `sbe-all` при
-  генерации кодеков.
+  поддержкой C++20 для сборки нативного декодера.
+- Локальный JDK (`third_party/jdk-21.0.2+13`) — нужен для запуска `sbe-all`
+  при генерации кодеков.
 
 Минимальный набор Python-зависимостей можно поставить так:
 
@@ -19,8 +19,9 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-В `requirements.txt` лежат минимальные зависимости для CLI (`click`, `dpkt`). При
-необходимости можно добавить тестовые зависимости (pytest и т.д.).
+`requirements.txt` содержит минимальный набор Python-зависимостей (click,
+pyarrow, pandas, tqdm и т.д.). При необходимости можно добавить тестовые
+пакеты (pytest и др.).
 
 ## 2. Сторонние исходники
 
@@ -90,58 +91,88 @@ python scripts/decode_pcap_to_arrow.py \
   собран.
 - `--build-dir` — указать альтернативный каталог для артефактов CMake.
 
-Результатом выполнения станут Parquet-файлы в указанном `--output` каталоге:
-`instruments.parquet`, `snapshot_orders.parquet`, `incremental_*`, `errors.parquet`
-и т.д. EmptyBook/ChannelReset пишутся в отдельные таблицы
-`incremental_empty_books.parquet` и `incremental_channel_resets.parquet`. Каждая
-таблица — потоково записанная версия соответствующей структуры, описанной в
-`batch_builder.h`.
+Результат раскладывается по каналам и фидам:
+
+```
+parsed/
+  channel_78/
+    instruments.parquet
+    snapshot_headers.parquet
+    ...
+    feed_A/
+      incremental_orders.parquet
+      incremental_deletes.parquet
+      ...
+    feed_B/
+      ...
+  channel_88/
+    ...
+```
+Каждая таблица — потоково записанная версия структуры из `batch_builder.h`.
 
 ## 6. Структура исходников
 
 - Нативный код/писатели: `cpp_decoder/*.cpp`, сгенерированные заголовки —
-  `cpp_decoder/sbe-generated/**`.
-- `src_old/` — архив прежней Python-версии, оставлен для справок.
-- `scripts/` — `generate_codecs.py` (SBE codegen) и `decode_pcap_to_arrow.py`
-  (build+run helper).
-- Табличные писатели (`parquet_writer.*`) обязаны стримить данные в Parquet
-  сразу после декодирования, без накопления всего архива в памяти.
+  `cpp_decoder/sbe-generated/**`. Декодер сразу стримит таблицы в Parquet,
+  не накапливая весь PCAP в памяти.
+- Python-пайплайн orderbook: каталог `orderbook/` содержит reusable-модули
+  (реплей, инструменты, билдеры выходов), которые используют и CLI в `scripts/`,
+  и любые ноутбуки/утилиты поверх Parquet-таблиц.
+- `scripts/` — набор вспомогательных CLI (`generate_codecs.py`,
+  `decode_pcap_to_arrow.py`, `convert_arrow_to_csv.py` и др.).
 
-На текущем этапе Python-слой не подключается к нативному декодеру напрямую — он
-работает только с готовыми Parquet-таблицами. Когда replay/аналитика будут
-возвращены, они будут читать результаты из `--output` каталога.
+Нативный декодер остаётся самостоятельным шагом: он выдаёт структуру каталогов
+`parsed/channel_XX/...`, а Python-скрипты потребляют эти файлы для дальнейшей
+обработки.
 
-## 7. Постобработка (flatten) Parquet-таблиц
+## 7. Конвертация Parquet→CSV
 
-После работы `b3sbe_decode` получаем «широкие» файлы вида
-`parsed/incremental_orders.parquet`, `snapshot_orders.parquet` и т.д. Для удобной
-работы с отдельными инструментами/каналами есть вспомогательный CLI
-`scripts/flatten_parquet.py`. Он стримово читает каждую таблицу и раскладывает её
-в Hive-партиционированные директории внутри `parsed_flatten/<table>/`:
+Для быстрых проверок можно выгрузить любые таблицы в CSV:
 
 ```
-python scripts/flatten_parquet.py \
-    --parsed-dir data/parsed \
-    --output-dir data/parsed_flatten \
-    --tables incremental_orders,incremental_deletes \
-    --overwrite \
-    --batch-size 2000000
+python scripts/convert_arrow_to_csv.py \
+    --input data/parsed \
+    --output tmp/csv
 ```
 
-Ключевые моменты:
+Скрипт рекурсивно проходит по входной директории и конвертирует все Parquet-файлы,
+сохраняя относительную структуру. Ключевые флаги:
 
-- `--tables` — можно перечислить подмножество таблиц; `*` (по умолчанию)
-  прогоняет все (`instruments`, `snapshot_*`, `incremental_*`,
-  `incremental_other`).
-- `--overwrite` удаляет только каталоги перечисленных таблиц внутри
-  `--output-dir`, остальные результаты остаются.
-- `--batch-size` управляет размером Arrow-батча при стриминге больших таблиц
-  (по умолчанию 2 млн строк; можно уменьшить, если не хватает памяти).
-- Каждая таблица записывается в `output_dir/<table>/channel_hint=…/security_id=…
-  [/feed_leg=…]/part-*.parquet`. Например, `data/parsed_flatten/
-  incremental_orders/channel_hint=78/security_id=100000098498/feed_leg=A/…`.
-- Запись идёт вручную, без финального «тихого» этапа, поэтому выполнение
-  завершается сразу после завершения прогресс-бара.
+- `--pattern instruments,snapshot_orders` — ограничить список файлов по имени;
+- `--overwrite` — разрешить перезапись существующих CSV;
+- `--max-rows 1000` — усечь каждую таблицу (удобно для снифпетов).
 
-Скрипт не изменяет исходные Parquet-файлы из `--parsed-dir` и при необходимости
-может быть запущен повторно на любом подмножестве таблиц.
+## 8. Построение L3/L2 событий
+
+После декодера основной шаг — `scripts/build_orderbook.py`. Скрипт читает
+Parquet-таблицы из `--data-root`, прогоняет реплей orderbook и сразу стримит
+снимки в `book_l3` (MBO/L3) и `book_l2` (MBP/L2) per тикер:
+
+```
+python scripts/build_orderbook.py \
+    --data-root parsed \
+    --output-root data/orderbook \
+    --ticker WDOF25 --ticker WINZ25 \
+    --feed feed_A --feed feed_B \
+    --since 2024-11-18T10:00:00Z \
+    --progress --csv
+```
+
+Ключевые флаги:
+
+- `--ticker` — перечисление тикеров; для каждого создаётся папка
+  `output_root/{ticker}/book_l{2,3}.(parquet|csv)`.
+- `--feed feed_A --feed feed_B` — порядок приоритета ног; берём первую
+  доступную ногу на канале.
+- `--since` (ISO-8601 или наносекунды) — отсечение событий по времени (или
+  реплеим всё после snapshot, если флаг не задан).
+- `--csv` — писать CSV вместо Parquet.
+- `--progress` — включить tqdm.
+- `--no-warnings` — заглушить предупреждения пайплайна.
+- `--no-rpt-warnings` — отключить предупреждения про разрывы rptSeq для тех
+  шаблонов, которые пока не покрыты (orderbook-критичные шаблоны проверяются,
+  но на второстепенных могут быть ложные срабатывания).
+
+На выходе получаем два файла на тикер: `book_l3.*` (все ордера после каждого
+EndOfEvent) и `book_l2.*` (агрегированные уровни). Дополнительно CLI печатает
+итоги по количеству событий/обновлений.
