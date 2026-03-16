@@ -1042,7 +1042,8 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                 cursor += sbe_types::FramingHeader::encodedLength();
                 const std::uint16_t message_length = framing.messageLength();
                 if (message_length == 0) {
-                    continue;
+                    cursor = payload.size;
+                    break;
                 }
                 if (message_length < message_header_len) {
                     log_error(meta, "framing", packet_index, message_index, 0, "message_bounds",
@@ -1068,6 +1069,11 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                 const std::uint16_t block_length = message_header.blockLength();
                 const std::size_t header_length = sbe_types::MessageHeader::encodedLength();
                 const std::size_t body_length = message_length - header_length;
+
+                if (options_.validate_schema && framing.encodingType() != kExpectedEncodingType) {
+                    log_error(meta, "framing", packet_index, message_index, template_id, "encoding_type",
+                              "unexpected encoding type", "");
+                }
 
                 if (options_.validate_schema &&
                     (schema_id != kExpectedSchemaId || schema_version != kExpectedSchemaVersion)) {
