@@ -757,6 +757,22 @@ void decode_security_definition(const MessageContext &ctx,
     row.raw_template_id = sbe_types::SecurityDefinition_12::sbeTemplateId();
 
     std::uint64_t position = 0;
+    auto underlyings_group = msg.noUnderlyings();
+    underlyings_group.forEach([&](sbe_types::SecurityDefinition_12::NoUnderlyings &underlying) {
+        InstrumentUnderlyingRow underlying_row{};
+        underlying_row.source_file = ctx.meta->source_file;
+        underlying_row.security_id = row.security_id;
+        underlying_row.packet_sequence_number = row.packet_sequence_number;
+        underlying_row.underlying_security_id = underlying.underlyingSecurityID();
+        underlying_row.underlying_security_exchange = underlying.getUnderlyingSecurityExchangeAsString();
+        underlying_row.underlying_symbol = underlying.getUnderlyingSymbolAsString();
+        underlying_row.position_in_group = position++;
+        if (underlyings_writer) {
+            underlyings_writer->Append(underlying_row);
+        }
+    });
+
+    position = 0;
     auto leg_group = msg.noLegs();
     leg_group.forEach([&](sbe_types::SecurityDefinition_12::NoLegs &leg) {
         InstrumentLegRow leg_row{};
@@ -782,22 +798,6 @@ void decode_security_definition(const MessageContext &ctx,
         leg_row.position_in_group = position++;
         if (legs_writer) {
             legs_writer->Append(leg_row);
-        }
-    });
-
-    position = 0;
-    auto underlyings_group = msg.noUnderlyings();
-    underlyings_group.forEach([&](sbe_types::SecurityDefinition_12::NoUnderlyings &underlying) {
-        InstrumentUnderlyingRow underlying_row{};
-        underlying_row.source_file = ctx.meta->source_file;
-        underlying_row.security_id = row.security_id;
-        underlying_row.packet_sequence_number = row.packet_sequence_number;
-        underlying_row.underlying_security_id = underlying.underlyingSecurityID();
-        underlying_row.underlying_security_exchange = underlying.getUnderlyingSecurityExchangeAsString();
-        underlying_row.underlying_symbol = underlying.getUnderlyingSymbolAsString();
-        underlying_row.position_in_group = position++;
-        if (underlyings_writer) {
-            underlyings_writer->Append(underlying_row);
         }
     });
 
