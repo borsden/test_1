@@ -1,11 +1,13 @@
 #include "decoder.h"
 
+#include "sbe-generated/b3_umdf_mbo_sbe/ChannelReset_11.h"
 #include "sbe-generated/b3_umdf_mbo_sbe/DeleteOrder_MBO_51.h"
 #include "sbe-generated/b3_umdf_mbo_sbe/FramingHeader.h"
 #include "sbe-generated/b3_umdf_mbo_sbe/MassDeleteOrders_MBO_52.h"
 #include "sbe-generated/b3_umdf_mbo_sbe/MessageHeader.h"
 #include "sbe-generated/b3_umdf_mbo_sbe/Order_MBO_50.h"
 #include "sbe-generated/b3_umdf_mbo_sbe/PacketHeader.h"
+#include "sbe-generated/b3_umdf_mbo_sbe/EmptyBook_9.h"
 #include "sbe-generated/b3_umdf_mbo_sbe/SecurityDefinition_12.h"
 #include "sbe-generated/b3_umdf_mbo_sbe/SnapshotFullRefresh_Header_30.h"
 #include "sbe-generated/b3_umdf_mbo_sbe/SnapshotFullRefresh_Orders_MBO_71.h"
@@ -208,12 +210,35 @@ namespace {
     X(Int64, packet_sequence_number, static_cast<int64_t>(row.packet_sequence_number)) \
     X(Int64, packet_sending_time_ns, static_cast<int64_t>(row.packet_sending_time_ns))
 
+#define INCREMENTAL_EMPTY_BOOK_COLUMNS(X) \
+    X(String, source_file, row.source_file) \
+    X(Int32, channel_hint, row.channel_hint) \
+    X(String, feed_leg, row.feed_leg) \
+    X(Int64, security_id, row.security_id) \
+    X(Int32, match_event_indicator_raw, static_cast<int32_t>(row.match_event_indicator_raw)) \
+    X(Int64, md_entry_timestamp_ns, static_cast<int64_t>(row.md_entry_timestamp_ns)) \
+    X(Int64, packet_sequence_number, static_cast<int64_t>(row.packet_sequence_number)) \
+    X(Int64, packet_sending_time_ns, static_cast<int64_t>(row.packet_sending_time_ns))
+
+#define INCREMENTAL_CHANNEL_RESET_COLUMNS(X) \
+    X(String, source_file, row.source_file) \
+    X(Int32, channel_hint, row.channel_hint) \
+    X(String, feed_leg, row.feed_leg) \
+    X(Int32, match_event_indicator_raw, static_cast<int32_t>(row.match_event_indicator_raw)) \
+    X(Int64, md_entry_timestamp_ns, static_cast<int64_t>(row.md_entry_timestamp_ns)) \
+    X(Int64, packet_sequence_number, static_cast<int64_t>(row.packet_sequence_number)) \
+    X(Int64, packet_sending_time_ns, static_cast<int64_t>(row.packet_sending_time_ns))
+
 #define INCREMENTAL_OTHER_COLUMNS(X) \
     X(String, source_file, row.source_file) \
+    X(Int32, channel_hint, row.channel_hint) \
+    X(String, feed_leg, row.feed_leg) \
     X(Int32, template_id, static_cast<int32_t>(row.template_id)) \
     X(String, template_name, row.template_name) \
     X(Int64, security_id, row.security_id) \
     X(Int32, rpt_seq, static_cast<int32_t>(row.rpt_seq)) \
+    X(Int32, match_event_indicator_raw, static_cast<int32_t>(row.match_event_indicator_raw)) \
+    X(Int64, md_entry_timestamp_ns, static_cast<int64_t>(row.md_entry_timestamp_ns)) \
     X(Int64, packet_sequence_number, static_cast<int64_t>(row.packet_sequence_number)) \
     X(Int64, packet_sending_time_ns, static_cast<int64_t>(row.packet_sending_time_ns)) \
     X(String, body_hex, row.body_hex) \
@@ -240,6 +265,8 @@ const std::vector<std::string> kAllTables = {
     "incremental_deletes",
     "incremental_mass_deletes",
     "incremental_trades",
+    "incremental_empty_books",
+    "incremental_channel_resets",
     "incremental_other",
     "errors",
 };
@@ -315,6 +342,10 @@ DEFINE_SCHEMA_AND_WRITER(IncrementalMassDeletes, IncrementalMassDeleteRow,
                          INCREMENTAL_MASS_DELETE_COLUMNS, "incremental_mass_deletes")
 DEFINE_SCHEMA_AND_WRITER(IncrementalTrades, IncrementalTradeRow, INCREMENTAL_TRADE_COLUMNS,
                          "incremental_trades")
+DEFINE_SCHEMA_AND_WRITER(IncrementalEmptyBooks, EmptyBookRow, INCREMENTAL_EMPTY_BOOK_COLUMNS,
+                         "incremental_empty_books")
+DEFINE_SCHEMA_AND_WRITER(IncrementalChannelResets, ChannelResetRow, INCREMENTAL_CHANNEL_RESET_COLUMNS,
+                         "incremental_channel_resets")
 DEFINE_SCHEMA_AND_WRITER(IncrementalOther, IncrementalOtherRow, INCREMENTAL_OTHER_COLUMNS,
                          "incremental_other")
 DEFINE_SCHEMA_AND_WRITER(Errors, ErrorRow, ERROR_COLUMNS, "errors")
@@ -377,6 +408,10 @@ constexpr std::uint16_t kExpectedEncodingType = 0xeb50;
 
 std::string template_name(std::uint16_t template_id) {
     switch (template_id) {
+        case 9:
+            return "EmptyBook_9";
+        case 11:
+            return "ChannelReset_11";
         case 12:
             return "SecurityDefinition_12";
         case 30:
@@ -573,6 +608,24 @@ void NativeDecoder::open_writers(const OutputOptions &output)
         incremental_trades_writer_.reset();
     }
 
+    if (should_emit("incremental_empty_books")) {
+        incremental_empty_books_writer_ = std::make_unique<TableStreamWriter<EmptyBookRow>>(
+            current_output_.output_dir, "incremental_empty_books", MakeIncrementalEmptyBooksSchema(),
+            WriteIncrementalEmptyBooks);
+        row_counts_["incremental_empty_books"] = 0;
+    } else {
+        incremental_empty_books_writer_.reset();
+    }
+
+    if (should_emit("incremental_channel_resets")) {
+        incremental_channel_resets_writer_ = std::make_unique<TableStreamWriter<ChannelResetRow>>(
+            current_output_.output_dir, "incremental_channel_resets", MakeIncrementalChannelResetsSchema(),
+            WriteIncrementalChannelResets);
+        row_counts_["incremental_channel_resets"] = 0;
+    } else {
+        incremental_channel_resets_writer_.reset();
+    }
+
     if (should_emit("incremental_other")) {
         incremental_other_writer_ = std::make_unique<TableStreamWriter<IncrementalOtherRow>>(
             current_output_.output_dir, "incremental_other", MakeIncrementalOtherSchema(), WriteIncrementalOther);
@@ -614,6 +667,8 @@ void NativeDecoder::close_writers()
     finalize("incremental_deletes", incremental_deletes_writer_);
     finalize("incremental_mass_deletes", incremental_mass_deletes_writer_);
     finalize("incremental_trades", incremental_trades_writer_);
+    finalize("incremental_empty_books", incremental_empty_books_writer_);
+    finalize("incremental_channel_resets", incremental_channel_resets_writer_);
     finalize("incremental_other", incremental_other_writer_);
     finalize("errors", errors_writer_);
 }
@@ -985,6 +1040,49 @@ IncrementalTradeRow make_trade_row(const MessageContext &ctx, sbe_types::Trade_5
     return row;
 }
 
+IncrementalOtherRow base_incremental_other_row(const MessageContext &ctx, std::uint16_t template_id,
+                                               std::string template_title, const std::uint8_t *body,
+                                               std::uint32_t body_length) {
+    IncrementalOtherRow row{};
+    row.source_file = ctx.meta->source_file;
+    row.channel_hint = ctx.meta->channel_hint;
+    row.feed_leg = ctx.meta->feed_leg;
+    row.template_id = template_id;
+    row.template_name = std::move(template_title);
+    row.packet_sequence_number = ctx.packet_row->packet_sequence_number;
+    row.packet_sending_time_ns = ctx.packet_row->packet_sending_time_ns;
+    if (body != nullptr && body_length > 0) {
+        row.body_hex = bytes_to_hex(body, body_length);
+    }
+    row.decode_status = "ok";
+    return row;
+}
+
+EmptyBookRow make_empty_book_row(const MessageContext &ctx, sbe_types::EmptyBook_9 &msg) {
+    EmptyBookRow row{};
+    row.source_file = ctx.meta->source_file;
+    row.channel_hint = ctx.meta->channel_hint;
+    row.feed_leg = ctx.meta->feed_leg;
+    row.security_id = static_cast<std::int64_t>(msg.securityID());
+    row.match_event_indicator_raw = msg.matchEventIndicator().rawValue();
+    row.md_entry_timestamp_ns = msg.mDEntryTimestamp().time();
+    row.packet_sequence_number = ctx.packet_row->packet_sequence_number;
+    row.packet_sending_time_ns = ctx.packet_row->packet_sending_time_ns;
+    return row;
+}
+
+ChannelResetRow make_channel_reset_row(const MessageContext &ctx, sbe_types::ChannelReset_11 &msg) {
+    ChannelResetRow row{};
+    row.source_file = ctx.meta->source_file;
+    row.channel_hint = ctx.meta->channel_hint;
+    row.feed_leg = ctx.meta->feed_leg;
+    row.match_event_indicator_raw = msg.matchEventIndicator().rawValue();
+    row.md_entry_timestamp_ns = msg.mDEntryTimestamp().time();
+    row.packet_sequence_number = ctx.packet_row->packet_sequence_number;
+    row.packet_sending_time_ns = ctx.packet_row->packet_sending_time_ns;
+    return row;
+}
+
 void NativeDecoder::parse_one(const FileMetadata &meta) {
     PcapReader reader(meta.path);
     if (!reader.good()) {
@@ -1128,6 +1226,25 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                                                    last_snapshot_row_for_security_);
                             break;
                         }
+                        case sbe_types::EmptyBook_9::sbeTemplateId(): {
+                            sbe_types::EmptyBook_9 msg_wrapper;
+                            msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
+                                                      block_length, schema_version, sbe_buffer);
+                            if (incremental_empty_books_writer_) {
+                                incremental_empty_books_writer_->Append(make_empty_book_row(msg_ctx, msg_wrapper));
+                            }
+                            break;
+                        }
+                        case sbe_types::ChannelReset_11::sbeTemplateId(): {
+                            sbe_types::ChannelReset_11 msg_wrapper;
+                            msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
+                                                      block_length, schema_version, sbe_buffer);
+                            if (incremental_channel_resets_writer_) {
+                                incremental_channel_resets_writer_->Append(
+                                    make_channel_reset_row(msg_ctx, msg_wrapper));
+                            }
+                            break;
+                        }
                         case sbe_types::Order_MBO_50::sbeTemplateId(): {
                             sbe_types::Order_MBO_50 msg_wrapper;
                             msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
@@ -1168,16 +1285,10 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                         }
                         default: {
                             if (incremental_other_writer_) {
-                                IncrementalOtherRow row{};
-                                row.source_file = meta.source_file;
-                                row.template_id = template_id;
-                                row.template_name = template_name(template_id);
-                                row.security_id = 0;
-                                row.rpt_seq = 0;
-                                row.packet_sequence_number = packet_row.packet_sequence_number;
-                                row.packet_sending_time_ns = packet_row.packet_sending_time_ns;
-                                row.body_hex = bytes_to_hex(reinterpret_cast<std::uint8_t *>(message_body),
-                                                            body_length);
+                                const auto body_bytes = reinterpret_cast<const std::uint8_t *>(message_body);
+                                auto row = base_incremental_other_row(msg_ctx, template_id,
+                                                                      template_name(template_id), body_bytes,
+                                                                      body_length);
                                 row.decode_status = "unsupported_template";
                                 incremental_other_writer_->Append(row);
                             }

@@ -61,6 +61,8 @@ class NativeDecoder {
     std::unique_ptr<TableStreamWriter<IncrementalDeleteRow>> incremental_deletes_writer_;
     std::unique_ptr<TableStreamWriter<IncrementalMassDeleteRow>> incremental_mass_deletes_writer_;
     std::unique_ptr<TableStreamWriter<IncrementalTradeRow>> incremental_trades_writer_;
+    std::unique_ptr<TableStreamWriter<EmptyBookRow>> incremental_empty_books_writer_;
+    std::unique_ptr<TableStreamWriter<ChannelResetRow>> incremental_channel_resets_writer_;
     std::unique_ptr<TableStreamWriter<IncrementalOtherRow>> incremental_other_writer_;
     std::unique_ptr<TableStreamWriter<ErrorRow>> errors_writer_;
     std::uint64_t snapshot_header_row_id_{1};

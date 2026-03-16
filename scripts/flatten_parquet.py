@@ -30,6 +30,8 @@ TABLE_PARTITIONS: dict[str, Sequence[str]] = {
     "incremental_deletes": ["channel_hint", "security_id", "feed_leg"],
     "incremental_mass_deletes": ["channel_hint", "security_id", "feed_leg"],
     "incremental_trades": ["channel_hint", "security_id", "feed_leg"],
+    "incremental_empty_books": ["channel_hint", "security_id", "feed_leg"],
+    "incremental_channel_resets": ["channel_hint", "feed_leg"],
     "incremental_other": ["channel_hint", "security_id", "feed_leg"],
 }
 

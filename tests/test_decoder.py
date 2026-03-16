@@ -143,6 +143,8 @@ def test_decode_incrementals(build_decoder, tmp_path):
             "incremental_deletes",
             "incremental_mass_deletes",
             "incremental_trades",
+            "incremental_empty_books",
+            "incremental_channel_resets",
             "incremental_other",
             "errors",
         ],
@@ -188,9 +190,43 @@ def test_decode_incrementals(build_decoder, tmp_path):
             "seller_firm",
         ],
     )
+    empty_books = read_parquet(output / "incremental_empty_books.parquet")
+    assert_columns(
+        empty_books,
+        [
+            "channel_hint",
+            "feed_leg",
+            "security_id",
+            "match_event_indicator_raw",
+            "md_entry_timestamp_ns",
+        ],
+    )
+
+    resets = read_parquet(output / "incremental_channel_resets.parquet")
+    assert_columns(
+        resets,
+        [
+            "channel_hint",
+            "feed_leg",
+            "match_event_indicator_raw",
+            "md_entry_timestamp_ns",
+        ],
+    )
+
     other = read_parquet(output / "incremental_other.parquet")
     assert other.num_rows > 0
-    assert_columns(other, ["template_id", "body_hex", "decode_status"])
+    assert_columns(
+        other,
+        [
+            "channel_hint",
+            "feed_leg",
+            "template_id",
+            "match_event_indicator_raw",
+            "md_entry_timestamp_ns",
+            "body_hex",
+            "decode_status",
+        ],
+    )
     errors = read_parquet(output / "errors.parquet")
     assert errors.num_rows == 0
 

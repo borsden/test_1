@@ -92,8 +92,10 @@ python scripts/decode_pcap_to_arrow.py \
 
 Результатом выполнения станут Parquet-файлы в указанном `--output` каталоге:
 `instruments.parquet`, `snapshot_orders.parquet`, `incremental_*`, `errors.parquet`
-и т.д. Каждая таблица — потоково записанная версия соответствующей структуры,
-описанной в `batch_builder.h`.
+и т.д. EmptyBook/ChannelReset пишутся в отдельные таблицы
+`incremental_empty_books.parquet` и `incremental_channel_resets.parquet`. Каждая
+таблица — потоково записанная версия соответствующей структуры, описанной в
+`batch_builder.h`.
 
 ## 6. Структура исходников
 

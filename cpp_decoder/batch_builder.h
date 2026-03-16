@@ -232,12 +232,37 @@ struct IncrementalTradeRow {
     std::uint64_t packet_sending_time_ns{0};
 };
 
+struct EmptyBookRow {
+    std::string source_file;
+    std::int32_t channel_hint{0};
+    std::string feed_leg;
+    std::int64_t security_id{0};
+    std::uint8_t match_event_indicator_raw{0};
+    std::uint64_t md_entry_timestamp_ns{0};
+    std::uint64_t packet_sequence_number{0};
+    std::uint64_t packet_sending_time_ns{0};
+};
+
+struct ChannelResetRow {
+    std::string source_file;
+    std::int32_t channel_hint{0};
+    std::string feed_leg;
+    std::uint8_t match_event_indicator_raw{0};
+    std::uint64_t md_entry_timestamp_ns{0};
+    std::uint64_t packet_sequence_number{0};
+    std::uint64_t packet_sending_time_ns{0};
+};
+
 struct IncrementalOtherRow {
     std::string source_file;
+    std::int32_t channel_hint{0};
+    std::string feed_leg;
     std::uint16_t template_id{0};
     std::string template_name;
     std::int64_t security_id{0};
     std::uint32_t rpt_seq{0};
+    std::uint8_t match_event_indicator_raw{0};
+    std::uint64_t md_entry_timestamp_ns{0};
     std::uint64_t packet_sequence_number{0};
     std::uint64_t packet_sending_time_ns{0};
     std::string body_hex;
@@ -363,6 +388,24 @@ class IncrementalTradesTable {
     std::vector<IncrementalTradeRow> rows;
 };
 
+class IncrementalEmptyBooksTable {
+  public:
+    void add(const EmptyBookRow &row) { rows.push_back(row); }
+    const std::vector<EmptyBookRow> &all() const { return rows; }
+    void clear() { rows.clear(); }
+  private:
+    std::vector<EmptyBookRow> rows;
+};
+
+class IncrementalChannelResetsTable {
+  public:
+    void add(const ChannelResetRow &row) { rows.push_back(row); }
+    const std::vector<ChannelResetRow> &all() const { return rows; }
+    void clear() { rows.clear(); }
+  private:
+    std::vector<ChannelResetRow> rows;
+};
+
 class IncrementalOtherTable {
   public:
     void add(const IncrementalOtherRow &row) { rows.push_back(row); }
@@ -394,6 +437,8 @@ struct TableCollection {
     IncrementalDeletesTable incremental_deletes;
     IncrementalMassDeletesTable incremental_mass_deletes;
     IncrementalTradesTable incremental_trades;
+    IncrementalEmptyBooksTable incremental_empty_books;
+    IncrementalChannelResetsTable incremental_channel_resets;
     IncrementalOtherTable incremental_other;
     ErrorsTable errors;
 
@@ -411,6 +456,8 @@ struct TableCollection {
         incremental_deletes.clear();
         incremental_mass_deletes.clear();
         incremental_trades.clear();
+        incremental_empty_books.clear();
+        incremental_channel_resets.clear();
         incremental_other.clear();
         errors.clear();
     }
