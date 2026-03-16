@@ -725,7 +725,6 @@ void decode_security_definition(const MessageContext &ctx,
     row.security_id = static_cast<std::int64_t>(msg.securityID());
     row.security_exchange = msg.getSecurityExchangeAsString();
     row.symbol = msg.getSymbolAsString();
-    row.security_desc = msg.getSecurityDescAsString();
     row.security_group = msg.getSecurityGroupAsString();
     row.security_type_raw = static_cast<std::uint16_t>(msg.securityTypeRaw());
     row.security_type = sbe_types::SecurityType::c_str(msg.securityType());
@@ -756,9 +755,6 @@ void decode_security_definition(const MessageContext &ctx,
     row.product_raw = static_cast<std::uint8_t>(msg.product());
     row.product = sbe_types::Product::c_str(msg.product());
     row.raw_template_id = sbe_types::SecurityDefinition_12::sbeTemplateId();
-    if (instruments) {
-        instruments->Append(row);
-    }
 
     std::uint64_t position = 0;
     auto leg_group = msg.noLegs();
@@ -825,6 +821,11 @@ void decode_security_definition(const MessageContext &ctx,
             attributes_writer->Append(attr_row);
         }
     });
+
+    row.security_desc = msg.getSecurityDescAsString();
+    if (instruments) {
+        instruments->Append(row);
+    }
 }
 
 void decode_snapshot_header(const MessageContext &ctx,
@@ -1040,28 +1041,35 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                 sbe_types::FramingHeader framing(
                     mutable_payload, framing_offset, payload.size, sbe_types::FramingHeader::sbeSchemaVersion());
                 cursor += sbe_types::FramingHeader::encodedLength();
-                const std::uint16_t framing_length = sbe_types::FramingHeader::encodedLength();
-                const std::uint16_t message_length = framing.messageLength();
-                if (message_length == 0) {
+                const std::uint16_t framing_length = framing.messageLength();
+                if (framing_length == 0) {
                     cursor = payload.size;
                     break;
                 }
-                if (message_length < framing_length + message_header_len) {
+                const std::size_t framing_header_len = sbe_types::FramingHeader::encodedLength();
+                if (framing_length < framing_header_len) {
+                    log_error(meta, "framing", packet_index, message_index, 0, "message_bounds",
+                              "message shorter than framing header", "");
+                    break;
+                }
+                const std::size_t message_length = framing_length - framing_header_len;
+                if (message_length < message_header_len) {
                     log_error(meta, "framing", packet_index, message_index, 0, "message_bounds",
                               "message shorter than header", "");
-                    cursor += message_length;
+                    const std::size_t skip = std::min<std::size_t>(message_length, payload.size - cursor);
+                    cursor += skip;
                     ++message_index;
                     continue;
                 }
-                const std::uint16_t sbe_length = static_cast<std::uint16_t>(message_length - framing_length);
-                if (cursor + sbe_length > payload.size) {
+                if (cursor + message_length > payload.size) {
                     log_error(meta, "framing", packet_index, message_index, 0, "message_bounds",
                               "message exceeds payload bounds", bytes_to_hex(payload.data + cursor,
                                                                                payload.size - cursor));
                     break;
                 }
-                auto *message_ptr = mutable_payload + cursor;
-                const std::size_t sbe_buffer = sbe_length;
+                const std::size_t message_start = cursor;
+                auto *message_ptr = mutable_payload + message_start;
+                const std::size_t sbe_buffer = message_length;
                 sbe_types::MessageHeader message_header(
                     message_ptr, 0, sbe_buffer, sbe_types::MessageHeader::sbeSchemaVersion());
                 const std::uint16_t template_id = message_header.templateId();
@@ -1069,7 +1077,7 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                 const std::uint16_t schema_version = message_header.version();
                 const std::uint16_t block_length = message_header.blockLength();
                 const std::size_t header_length = sbe_types::MessageHeader::encodedLength();
-                const std::size_t body_length = sbe_length - header_length;
+                const std::size_t body_length = message_length - header_length;
 
                 if (options_.validate_schema && framing.encodingType() != kExpectedEncodingType) {
                     log_error(meta, "framing", packet_index, message_index, template_id, "encoding_type",
@@ -1082,14 +1090,15 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                     oss << "schema=" << schema_id << " version=" << schema_version;
                     log_error(meta, "message_header", packet_index, message_index, template_id, "schema_mismatch",
                               oss.str(), bytes_to_hex(reinterpret_cast<std::uint8_t *>(message_ptr),
-                                                     sbe_length));
-                    cursor += sbe_length;
+                                                     message_length));
+                    cursor += message_length;
                     ++message_index;
                     continue;
                 }
 
                 MessageContext msg_ctx{&meta, &packet_row, message_index, template_id};
                 auto *message_body = message_ptr;
+                std::size_t consumed_body = body_length;
                 try {
                     switch (template_id) {
                         case sbe_types::SecurityDefinition_12::sbeTemplateId(): {
@@ -1180,7 +1189,8 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                               bytes_to_hex(reinterpret_cast<std::uint8_t *>(message_body), body_length));
                 }
 
-                cursor += sbe_length;
+                const std::size_t total_consumed = header_length + consumed_body;
+                cursor = message_start + total_consumed;
                 ++message_index;
             }
         } catch (const std::exception &ex) {
