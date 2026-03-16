@@ -80,14 +80,14 @@ parquet::schema::NodePtr MakeInt32Column(const std::string &name,
                                          parquet::Repetition::type repetition)
 {
     return parquet::schema::PrimitiveNode::Make(name, repetition, parquet::Type::INT32,
-                                                parquet::ConvertedType::NONE);
+                                                parquet::ConvertedType::INT_32);
 }
 
 parquet::schema::NodePtr MakeInt64Column(const std::string &name,
                                          parquet::Repetition::type repetition)
 {
     return parquet::schema::PrimitiveNode::Make(name, repetition, parquet::Type::INT64,
-                                                parquet::ConvertedType::NONE);
+                                                parquet::ConvertedType::INT_64);
 }
 
 parquet::schema::NodePtr MakeDoubleColumn(const std::string &name,

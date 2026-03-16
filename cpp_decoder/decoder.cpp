@@ -245,7 +245,48 @@ const std::vector<std::string> kAllTables = {
 };
 
 #define APPLY_SCHEMA_FIELD(type, name, expr) fields.push_back(Make##type##Column(#name));
-#define APPLY_WRITE_FIELD(type, name, expr) writer << (expr);
+
+inline void WriteString(parquet::StreamWriter &writer, const std::string &value)
+{
+    writer << value;
+}
+
+inline void WriteString(parquet::StreamWriter &writer, std::string_view value)
+{
+    writer << value;
+}
+
+inline void WriteString(parquet::StreamWriter &writer, const char *value)
+{
+    writer << value;
+}
+
+inline void WriteBinary(parquet::StreamWriter &writer, const std::string &value)
+{
+    writer << value;
+}
+
+inline void WriteInt32(parquet::StreamWriter &writer, std::int32_t value)
+{
+    writer << value;
+}
+
+inline void WriteInt64(parquet::StreamWriter &writer, std::int64_t value)
+{
+    writer << value;
+}
+
+inline void WriteDouble(parquet::StreamWriter &writer, double value)
+{
+    writer << value;
+}
+
+inline void WriteBool(parquet::StreamWriter &writer, bool value)
+{
+    writer << value;
+}
+
+#define APPLY_WRITE_FIELD(type, name, expr) Write##type(writer, expr);
 
 #define DEFINE_SCHEMA_AND_WRITER(TABLE, ROWTYPE, COLUMNS, NAME)                                    \
     std::shared_ptr<parquet::schema::GroupNode> Make##TABLE##Schema() {                           \
@@ -684,8 +725,7 @@ void decode_security_definition(const MessageContext &ctx,
     row.security_id = static_cast<std::int64_t>(msg.securityID());
     row.security_exchange = msg.getSecurityExchangeAsString();
     row.symbol = msg.getSymbolAsString();
-    const std::uint8_t security_desc_length = msg.securityDescLength();
-    row.security_desc.assign(msg.securityDesc(), msg.securityDesc() + security_desc_length);
+    row.security_desc = msg.getSecurityDescAsString();
     row.security_group = msg.getSecurityGroupAsString();
     row.security_type_raw = static_cast<std::uint16_t>(msg.securityTypeRaw());
     row.security_type = sbe_types::SecurityType::c_str(msg.securityType());
@@ -729,8 +769,18 @@ void decode_security_definition(const MessageContext &ctx,
         leg_row.packet_sequence_number = row.packet_sequence_number;
         leg_row.leg_security_id = leg.legSecurityID();
         leg_row.leg_symbol = leg.getLegSymbolAsString();
-        leg_row.leg_side_raw = static_cast<std::uint8_t>(leg.legSide());
-        leg_row.leg_side = leg_row.leg_side_raw == 1 ? "buy" : leg_row.leg_side_raw == 2 ? "sell" : "unknown";
+        leg_row.leg_side_raw = leg.legSideRaw();
+        switch (static_cast<sbe_types::Side::Value>(leg_row.leg_side_raw)) {
+            case sbe_types::Side::Value::BUY:
+                leg_row.leg_side = "buy";
+                break;
+            case sbe_types::Side::Value::SELL:
+                leg_row.leg_side = "sell";
+                break;
+            default:
+                leg_row.leg_side = "unknown";
+                break;
+        }
         leg_row.leg_ratio_qty_mantissa = leg.legRatioQty().mantissa();
         leg_row.leg_ratio_qty = scale_decimal(leg_row.leg_ratio_qty_mantissa, sbe_types::RatioQty::exponent());
         leg_row.position_in_group = position++;
@@ -982,26 +1032,34 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                 sbe_types::FramingHeader framing(
                     mutable_payload, cursor, payload.size, sbe_types::FramingHeader::sbeSchemaVersion());
                 cursor += sbe_types::FramingHeader::encodedLength();
+                const std::uint16_t framing_length = sbe_types::FramingHeader::encodedLength();
                 const std::uint16_t message_length = framing.messageLength();
-                if (message_length == 0 || cursor + message_length > payload.size) {
+                if (message_length <= framing_length) {
                     log_error(meta, "framing", packet_index, message_index, 0, "message_bounds",
-                              "invalid message length", "");
+                              "message shorter than framing header", "");
+                    break;
+                }
+                const std::uint16_t sbe_message_length = static_cast<std::uint16_t>(message_length - framing_length);
+                if (sbe_message_length < sbe_types::MessageHeader::encodedLength()) {
+                    log_error(meta, "framing", packet_index, message_index, 0, "message_bounds",
+                              "message shorter than header", "");
+                    break;
+                }
+                if (cursor + sbe_message_length > payload.size) {
+                    log_error(meta, "framing", packet_index, message_index, 0, "message_bounds",
+                              "message exceeds payload bounds", bytes_to_hex(payload.data + cursor,
+                                                                                payload.size - cursor));
                     break;
                 }
                 auto *message_ptr = mutable_payload + cursor;
                 sbe_types::MessageHeader message_header(
-                    message_ptr, 0, message_length, sbe_types::MessageHeader::sbeSchemaVersion());
+                    message_ptr, 0, sbe_message_length, sbe_types::MessageHeader::sbeSchemaVersion());
                 const std::uint16_t template_id = message_header.templateId();
                 const std::uint16_t schema_id = message_header.schemaId();
                 const std::uint16_t schema_version = message_header.version();
                 const std::uint16_t block_length = message_header.blockLength();
                 const std::size_t header_length = sbe_types::MessageHeader::encodedLength();
-                if (message_length < header_length) {
-                    log_error(meta, "message_header", packet_index, message_index, template_id, "header_length",
-                              "message shorter than header", "");
-                    break;
-                }
-                const std::size_t body_length = message_length - header_length;
+                const std::size_t body_length = sbe_message_length - header_length;
 
                 if (options_.validate_schema && framing.encodingType() != kExpectedEncodingType) {
                     log_error(meta, "framing", packet_index, message_index, template_id, "encoding_type",
@@ -1014,8 +1072,8 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                     oss << "schema=" << schema_id << " version=" << schema_version;
                     log_error(meta, "message_header", packet_index, message_index, template_id, "schema_mismatch",
                               oss.str(), bytes_to_hex(reinterpret_cast<std::uint8_t *>(message_ptr),
-                                                     message_length));
-                    cursor += message_length;
+                                                     sbe_message_length));
+                    cursor += sbe_message_length;
                     ++message_index;
                     continue;
                 }
@@ -1027,7 +1085,7 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                         case sbe_types::SecurityDefinition_12::sbeTemplateId(): {
                             sbe_types::SecurityDefinition_12 msg_wrapper;
                             msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
-                                                      block_length, schema_version, message_length);
+                                                      block_length, schema_version, sbe_message_length);
                             decode_security_definition(msg_ctx, msg_wrapper, instruments_writer_.get(),
                                                         instrument_legs_writer_.get(),
                                                         instrument_underlyings_writer_.get(),
@@ -1037,7 +1095,7 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                         case sbe_types::SnapshotFullRefresh_Header_30::sbeTemplateId(): {
                             sbe_types::SnapshotFullRefresh_Header_30 msg_wrapper;
                             msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
-                                                      block_length, schema_version, message_length);
+                                                      block_length, schema_version, sbe_message_length);
                             decode_snapshot_header(msg_ctx, msg_wrapper, snapshot_headers_writer_.get(),
                                                    snapshot_header_row_id_,
                                                    last_snapshot_row_for_security_);
@@ -1046,7 +1104,7 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                         case sbe_types::SnapshotFullRefresh_Orders_MBO_71::sbeTemplateId(): {
                             sbe_types::SnapshotFullRefresh_Orders_MBO_71 msg_wrapper;
                             msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
-                                                      block_length, schema_version, message_length);
+                                                      block_length, schema_version, sbe_message_length);
                             decode_snapshot_orders(msg_ctx, msg_wrapper, snapshot_orders_writer_.get(),
                                                    last_snapshot_row_for_security_);
                             break;
@@ -1054,7 +1112,7 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                         case sbe_types::Order_MBO_50::sbeTemplateId(): {
                             sbe_types::Order_MBO_50 msg_wrapper;
                             msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
-                                                      block_length, schema_version, message_length);
+                                                      block_length, schema_version, sbe_message_length);
                             if (incremental_orders_writer_) {
                                 incremental_orders_writer_->Append(make_incremental_order_row(msg_ctx, msg_wrapper));
                             }
@@ -1063,7 +1121,7 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                         case sbe_types::DeleteOrder_MBO_51::sbeTemplateId(): {
                             sbe_types::DeleteOrder_MBO_51 msg_wrapper;
                             msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
-                                                      block_length, schema_version, message_length);
+                                                      block_length, schema_version, sbe_message_length);
                             if (incremental_deletes_writer_) {
                                 incremental_deletes_writer_->Append(
                                     make_incremental_delete_row(msg_ctx, msg_wrapper));
@@ -1073,7 +1131,7 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                         case sbe_types::MassDeleteOrders_MBO_52::sbeTemplateId(): {
                             sbe_types::MassDeleteOrders_MBO_52 msg_wrapper;
                             msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
-                                                      block_length, schema_version, message_length);
+                                                      block_length, schema_version, sbe_message_length);
                             if (incremental_mass_deletes_writer_) {
                                 incremental_mass_deletes_writer_->Append(
                                     make_mass_delete_row(msg_ctx, msg_wrapper));
@@ -1083,7 +1141,7 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                         case sbe_types::Trade_53::sbeTemplateId(): {
                             sbe_types::Trade_53 msg_wrapper;
                             msg_wrapper.wrapForDecode(message_body, sbe_types::MessageHeader::encodedLength(),
-                                                      block_length, schema_version, message_length);
+                                                      block_length, schema_version, sbe_message_length);
                             if (incremental_trades_writer_) {
                                 incremental_trades_writer_->Append(make_trade_row(msg_ctx, msg_wrapper));
                             }
@@ -1112,7 +1170,7 @@ void NativeDecoder::parse_one(const FileMetadata &meta) {
                               bytes_to_hex(reinterpret_cast<std::uint8_t *>(message_body), body_length));
                 }
 
-                cursor += message_length;
+                cursor += sbe_message_length;
                 ++message_index;
             }
         } catch (const std::exception &ex) {
