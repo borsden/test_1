@@ -5,8 +5,8 @@
 
 ## 1. Предварительные требования
 
-- Python 3.12+ c `pip` — нужен только для установки `pyarrow`, из которого мы
-  используем нативные `libarrow`/`libparquet`.
+- Python 3.12+ с `pip` — используем для вспомогательных CLI (`click`) и
+  библиотек `pyarrow`, `dpkt`.
 - CMake ≥ 3.23, Ninja (или другой поддерживаемый генератор) и компилятор с
   поддержкой C++20.
 - Локальный JDK (`third_party/jdk-21.0.2+13`) — гоняем через него `sbe-all` при
@@ -19,8 +19,8 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-В `requirements.txt` сейчас только `pyarrow`, но при необходимости можно добавить
-другие CLI-инструменты (pytest и т.д.).
+В `requirements.txt` лежат минимальные зависимости для CLI (`click`, `dpkt`). При
+необходимости можно добавить тестовые зависимости (pytest и т.д.).
 
 ## 2. Сторонние исходники
 
@@ -32,24 +32,28 @@ third_party/
 
 Jar можно взять из официального Maven-репозитория Real Logic SBE:
 <https://repo1.maven.org/maven2/uk/co/real-logic/sbe-all/1.38.0/sbe-all-1.38.0.jar>
-(или нужной версии) и сохранить в `third_party/sbe-all-1.38.0.jar`. При
-необходимости обновления достаточно заменить этот файл и задать новую версию в
-`scripts/generate_codecs.sh`.
+(или нужной версии) и сохранить в `third_party/sbe-all-1.38.0.jar`. Скрипт
+`scripts/generate_codecs.py` позволяет явно указать путь к jar, схеме и JDK.
 
 ## 3. Генерация SBE-кодеков
 
 ```
-./scripts/generate_codecs.sh
+python scripts/generate_codecs.py \
+    --schema schema/b3-market-data-messages-1.8.0.xml \
+    --jar third_party/sbe-all-1.38.0.jar \
+    --output cpp_decoder/sbe-generated
 ```
 
-По умолчанию скрипт использует:
+Ключевые опции CLI:
 
-- схему `schema/b3-market-data-messages-1.8.0.xml`;
-- выходной каталог `cpp_decoder/sbe-generated/b3_umdf_mbo_sbe/*.h`;
-- jar `third_party/sbe-all-1.38.0.jar`.
+- `--java-bin` / `--java-opts` — выбор конкретного JDK и JVM-флагов;
+- `--define -Dsbe.foo=bar` — дополнительные `-D` свойства для генератора;
+- `--target-language` и `--no-stubs` — управление типом выходного кода;
+- `--dry-run` — показать итоговую команду без запуска.
 
-Если нужно перегенерировать поверх новой версии схемы, замените XML в `schema/`
-и обновите переменную `SBE_VERSION` внутри скрипта.
+По умолчанию берутся схема из `schema/`, jar из `third_party/` и выходной
+каталог `cpp_decoder/sbe-generated`. Для смены версии достаточно передать иные
+пути в CLI.
 
 ## 4. Сборка C++
 
@@ -66,7 +70,7 @@ cmake --build build
 конфигурирует/собирает проект и запускает бинарь:
 
 ```
-./scripts/decode_pcap_to_arrow.py \
+python scripts/decode_pcap_to_arrow.py \
     --input /mnt/Projects/test_1/data/20241118 \
     --output ./parsed \
     --max-packets 10000   # опционально
@@ -84,6 +88,7 @@ cmake --build build
 - `--no-validate` — отключить проверку `schemaId/schemaVersion` в заголовках.
 - `--skip-build` — пропустить `cmake -S/-B` и `cmake --build`, если проект уже
   собран.
+- `--build-dir` — указать альтернативный каталог для артефактов CMake.
 
 Результатом выполнения станут Parquet-файлы в указанном `--output` каталоге:
 `instruments.parquet`, `snapshot_orders.parquet`, `incremental_*`, `errors.parquet`
@@ -95,7 +100,7 @@ cmake --build build
 - Нативный код/писатели: `cpp_decoder/*.cpp`, сгенерированные заголовки —
   `cpp_decoder/sbe-generated/**`.
 - `src_old/` — архив прежней Python-версии, оставлен для справок.
-- `scripts/` — `generate_codecs.sh` (SBE codegen) и `decode_pcap_to_arrow.py`
+- `scripts/` — `generate_codecs.py` (SBE codegen) и `decode_pcap_to_arrow.py`
   (build+run helper).
 - Табличные писатели (`parquet_writer.*`) обязаны стримить данные в Parquet
   сразу после декодирования, без накопления всего архива в памяти.

@@ -1,61 +1,64 @@
 #!/usr/bin/env python3
-"""Helper script to build the native decoder and run it on a directory of PCAP files."""
+"""Helper script to configure/build the native decoder and run it on PCAP inputs."""
 
 from __future__ import annotations
 
-import argparse
-import pathlib
 import subprocess
-import sys
-from typing import List
+from pathlib import Path
+from typing import Sequence
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+import click
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def run(cmd: List[str]) -> None:
-    print("$", " ".join(cmd))
+def run(cmd: Sequence[str]) -> None:
+    click.echo("$ " + " ".join(cmd))
     proc = subprocess.run(cmd, cwd=REPO_ROOT)
     if proc.returncode != 0:
-        raise SystemExit(proc.returncode)
+        raise click.ClickException(f"Command failed with exit code {proc.returncode}")
 
 
-def ensure_built(build_dir: pathlib.Path, skip: bool) -> None:
+def ensure_built(build_dir: Path, skip: bool) -> None:
     if skip:
         return
     run(["cmake", "-S", ".", "-B", str(build_dir)])
     run(["cmake", "--build", str(build_dir)])
 
 
-def main(argv: List[str]) -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", action="append", dest="inputs", required=True,
-                        help="File or directory with .pcap files (can be repeated)")
-    parser.add_argument("--output", required=True, help="Directory for parquet outputs")
-    parser.add_argument("--tables", help="Comma-separated list of tables to emit", default="")
-    parser.add_argument("--max-packets", type=int, default=0,
-                        help="Optional per-file cap for debugging runs")
-    parser.add_argument("--no-validate", action="store_true", help="Skip schema validation")
-    parser.add_argument("--build-dir", default="build")
-    parser.add_argument("--skip-build", action="store_true",
-                        help="Assume cmake project is already configured/built")
-    args = parser.parse_args(argv)
-
-    build_dir = REPO_ROOT / args.build_dir
-    ensure_built(build_dir, args.skip_build)
+@click.command()
+@click.option("--input", "inputs", multiple=True, required=True,
+              type=click.Path(path_type=Path),
+              help="File or directory with .pcap files (option can be repeated)")
+@click.option("--output", required=True, type=click.Path(path_type=Path),
+              help="Directory for parquet outputs")
+@click.option("--tables", default="", show_default=True,
+              help="Comma-separated list of tables to emit")
+@click.option("--max-packets", type=int, default=0, show_default=True,
+              help="Optional per-file cap for debugging runs")
+@click.option("--no-validate", is_flag=True, help="Skip schema validation in the native decoder")
+@click.option("--build-dir", default="build", show_default=True,
+              type=click.Path(path_type=Path))
+@click.option("--skip-build", is_flag=True,
+              help="Assume cmake project is already configured and built")
+def main(inputs: Sequence[Path], output: Path, tables: str, max_packets: int, no_validate: bool,
+         build_dir: Path, skip_build: bool) -> None:
+    ensure_built(build_dir, skip_build)
     binary = build_dir / "b3sbe_decode"
     if not binary.exists():
-        raise SystemExit(f"Decoder binary not found at {binary}. Did the build complete?")
+        raise click.ClickException(f"Decoder binary not found at {binary}. Did the build complete?")
 
-    cmd = [str(binary), "--output", args.output]
-    for item in args.inputs:
-        cmd.extend(["--input", item])
-    if args.tables:
-        cmd.extend(["--tables", args.tables])
-    if args.max_packets:
-        cmd.extend(["--max-packets", str(args.max_packets)])
-    if args.no_validate:
+    cmd = [str(binary), "--output", str(output)]
+    for item in inputs:
+        cmd.extend(["--input", str(item)])
+    if tables:
+        cmd.extend(["--tables", tables])
+    if max_packets:
+        cmd.extend(["--max-packets", str(max_packets)])
+    if no_validate:
         cmd.append("--no-validate")
     run(cmd)
 
+
 if __name__ == "__main__":  # pragma: no cover
-    main(sys.argv[1:])
+    main()
