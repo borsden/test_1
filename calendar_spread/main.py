@@ -138,20 +138,11 @@ def calc_executable_spread(merged: pd.DataFrame, legs: tuple[dict, ...]) -> pd.S
     return total
 
 
-def invert_leg_sides(legs: tuple[dict, ...]) -> tuple[dict, ...]:
-    """Меняет направление ног, чтобы посчитать обратный спред."""
-
-    flipped = []
-    for leg in legs:
-        flipped.append({**leg, "side": "sell" if leg["side"] == "buy" else "buy"})
-    return tuple(flipped)
-
-
 def build_spread_frame() -> pd.DataFrame:
     """Формирует единый датафрейм со всем нужным: трейспредами и котировкой комбо.
 
     1. Загружаем ноги и объединяем их по времени.
-    2. Считаем mid и исполнимые спреды в обоих направлениях.
+    2. Считаем mid и исполнимый спред buy front / sell back.
     3. Приклеиваем биржевой инструмент WD1Z24F25 для сравнения.
     """
 
@@ -164,7 +155,6 @@ def build_spread_frame() -> pd.DataFrame:
     spread = merged[["timestamp"]].copy()
     spread["spread_mid"] = calc_mid_spread(merged, LEG_DEFINITIONS)
     spread["spread_exec_buy_sell"] = calc_executable_spread(merged, LEG_DEFINITIONS)
-    spread["spread_exec_sell_buy"] = calc_executable_spread(merged, invert_leg_sides(LEG_DEFINITIONS))
 
     combo_frame = prepare_leg_frame(COMBO_SYMBOL)
     combo_frame = combo_frame.rename(columns={f"mid_price_{COMBO_SYMBOL}": "wd1_mid_price"})
@@ -182,14 +172,21 @@ def plot_spreads(spread_df: pd.DataFrame) -> dict[str, Path]:
     """Создаёт интерактивный Plotly-график и сохраняет его в HTML+PNG."""
     fig = go.Figure()
     lines = [
-        ("spread_mid", "Mid spread"),
-        ("spread_exec_buy_sell", "Buy front / Sell back"),
-        ("spread_exec_sell_buy", "Sell front / Buy back"),
+        {"column": "spread_mid", "label": "Mid spread"},
+        {"column": "spread_exec_buy_sell", "label": "Buy front / Sell back"},
     ]
     if "wd1_mid_price" in spread_df.columns:
-        lines.append(("wd1_mid_price", f"{COMBO_SYMBOL} mid"))
+        lines.append(
+            {
+                "column": "wd1_mid_price",
+                "label": f"{COMBO_SYMBOL} mid",
+                "color": "#000000",
+                "width": 3,
+            }
+        )
 
-    for column, label in lines:
+    for config in lines:
+        column = config["column"]
         if column not in spread_df.columns:
             continue
         fig.add_trace(
@@ -197,7 +194,12 @@ def plot_spreads(spread_df: pd.DataFrame) -> dict[str, Path]:
                 x=spread_df["timestamp"],
                 y=spread_df[column],
                 mode="lines",
-                name=label,
+                name=config["label"],
+                line={
+                    key: config[key]
+                    for key in ("color", "width", "dash")
+                    if key in config
+                },
             )
         )
 
@@ -222,7 +224,6 @@ def main() -> None:
         "timestamp",
         "spread_mid",
         "spread_exec_buy_sell",
-        "spread_exec_sell_buy",
     ]
     if "wd1_mid_price" in spread_df.columns:
         preview_cols.append("wd1_mid_price")
