@@ -253,11 +253,21 @@ class OrderBook:
             )
         self.next_rpt_seq = (message.rpt_seq or 0) + 1
 
-    def snapshot(self) -> Dict[str, Sequence[OrderState]]:
+    def snapshot(self, depth: int | None = None) -> Dict[str, Sequence[OrderState]]:
         return {
-            "bids": self.bids.snapshot_orders(),
-            "asks": self.asks.snapshot_orders(),
+            "bids": self._snapshot_side(self.bids, depth),
+            "asks": self._snapshot_side(self.asks, depth),
         }
+
+    @staticmethod
+    def _snapshot_side(side: BookSideState, depth: int | None) -> Sequence[OrderState]:
+        if depth is None:
+            source = side.orders
+        elif depth <= 0:
+            return tuple()
+        else:
+            source = side.orders[:depth]
+        return tuple(order.clone() for order in source)
 
     def _emit_warning(self, text: str) -> None:
         LOGGER.warning(text)

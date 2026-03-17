@@ -145,8 +145,9 @@ python scripts/convert_arrow_to_csv.py \
 ## 8. Построение L3/L2/L1 событий
 
 После декодера основной шаг — `scripts/build_orderbook.py`. Скрипт читает
-Parquet-таблицы из `--data-root`, прогоняет реплей orderbook и сразу стримит
-снимки в `book_l3` (MBO/L3), `book_l2` (MBP/L2) и `book_l1` (BBO/L1) per тикер:
+Parquet-таблицы из `--data-root`, прогоняет реплей orderbook и в зависимости от
+запрошенного уровня (`--level`) стримит снимки в `book_l3` (MBO/L3), `book_l2`
+и/или `book_l1` (BBO/L1) per тикер:
 
 ```
 python scripts/build_orderbook.py \
@@ -166,6 +167,10 @@ python scripts/build_orderbook.py \
   доступную ногу на канале.
 - `--since` (ISO-8601 или наносекунды) — отсечение событий по времени (или
   реплеим всё после snapshot, если флаг не задан).
+- `--level 1|2|3` — ограничить глубину вывода. При уровне 1 пишем только
+  `book_l1` (и реплей держит в памяти лишь топ уровня), при уровне 2 — ещё и
+  `book_l2`, при уровне 3 (по умолчанию) получаем полный набор `book_l1` +
+  `book_l2` + `book_l3`.
 - `--csv` — писать CSV вместо Parquet.
 - `--progress` — включить tqdm.
 - `--no-warnings` — заглушить предупреждения пайплайна.

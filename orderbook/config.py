@@ -15,6 +15,7 @@ class PipelineConfig:
     feeds: Tuple[str, ...] = ("feed_A", "feed_B")
     channels: Tuple[str, ...] | None = None
     batch_size: int = 1_000
+    level: int = 3
     since_ns: int | None = None
     until_ns: int | None = None
     show_progress: bool = False
@@ -50,6 +51,11 @@ class PipelineConfig:
 
         if self.batch_size <= 0:
             raise ValueError("batch_size must be positive")
+
+        normalized_level = int(self.level)
+        if normalized_level not in {1, 2, 3}:
+            raise ValueError("level must be between 1 and 3")
+        object.__setattr__(self, "level", normalized_level)
 
         if self.since_ns is not None and self.since_ns < 0:
             raise ValueError("since_ns must be non-negative nanoseconds")

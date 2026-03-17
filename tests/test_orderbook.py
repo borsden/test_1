@@ -18,7 +18,7 @@ from orderbook.models import (
 from orderbook.order_book import OrderBook, OrderState
 from orderbook.output_builder import build_bbo_rows
 from orderbook.replay import BookEventSnapshot, EventRecorder, ReplayStats
-from scripts.build_orderbook import _parse_since
+from scripts.build_orderbook import SnapshotOutputManager, _parse_since
 
 
 def _snapshot_book(channel: str, security_id: int) -> SnapshotBook:
@@ -262,6 +262,94 @@ def test_event_recorder_streams_to_consumer() -> None:
     assert collected[0].bids[0].price == 10.0
 
 
+def test_event_recorder_level_one_limits_snapshot_depth() -> None:
+    book = OrderBook(channel="channel_1", security_id=1, snapshot=None)
+    base_kwargs = dict(
+        channel="channel_1",
+        feed="feed_A",
+        security_id=1,
+        packet_sequence_version=1,
+        packet_sending_time_ns=0,
+        match_event_indicator_raw=0,
+        md_entry_timestamp_ns=0,
+        message_index_in_packet=1,
+    )
+    updates = [
+        OrderUpdateMessage(
+            **base_kwargs,
+            packet_sequence_number=1,
+            rpt_seq=1,
+            side=BookSide.BID,
+            position_no=1,
+            price=10.0,
+            size=1,
+            secondary_order_id=1,
+            md_update_action="NEW",
+        ),
+        OrderUpdateMessage(
+            **base_kwargs,
+            packet_sequence_number=2,
+            rpt_seq=2,
+            side=BookSide.BID,
+            position_no=2,
+            price=9.5,
+            size=2,
+            secondary_order_id=2,
+            md_update_action="NEW",
+        ),
+        OrderUpdateMessage(
+            **base_kwargs,
+            packet_sequence_number=3,
+            rpt_seq=3,
+            side=BookSide.ASK,
+            position_no=1,
+            price=11.0,
+            size=3,
+            secondary_order_id=3,
+            md_update_action="NEW",
+        ),
+        OrderUpdateMessage(
+            **base_kwargs,
+            packet_sequence_number=4,
+            rpt_seq=4,
+            side=BookSide.ASK,
+            position_no=2,
+            price=11.5,
+            size=4,
+            secondary_order_id=4,
+            md_update_action="NEW",
+        ),
+    ]
+    for msg in updates:
+        book.handle_update(msg)
+    instrument = _instrument_record(symbol="TST")
+    recorder = EventRecorder(
+        instruments={("channel_1", 1): instrument},
+        level=1,
+    )
+    key = ("channel_1", 1)
+    recorder.touch(key)
+    marker_kwargs = dict(base_kwargs)
+    marker_kwargs["match_event_indicator_raw"] = 0x80
+    marker = OrderUpdateMessage(
+        **marker_kwargs,
+        packet_sequence_number=5,
+        rpt_seq=5,
+        side=BookSide.BID,
+        position_no=1,
+        price=10.0,
+        size=1,
+        secondary_order_id=1,
+        md_update_action="CHANGE",
+    )
+    recorder.handle_match_event(marker, {key: book}, ReplayStats())
+    snapshot = recorder.snapshots[0]
+    assert len(snapshot.bids) == 1
+    assert snapshot.bids[0].price == 10.0
+    assert len(snapshot.asks) == 1
+    assert snapshot.asks[0].price == 11.0
+
+
 def test_bbo_builder_uses_first_orders() -> None:
     snapshot = BookEventSnapshot(
         instrument=_instrument_record(symbol="TEST"),
@@ -329,3 +417,39 @@ def test_parse_since_supports_iso8601_and_ns() -> None:
     expected = int(datetime(2024, 1, 1, tzinfo=timezone.utc).timestamp() * 1_000_000_000)
     assert _parse_since("2024-01-01T00:00:00+00:00") == expected
     assert _parse_since(str(expected)) == expected
+
+
+def test_snapshot_output_manager_respects_level(tmp_path) -> None:
+    instrument = _instrument_record(symbol="TEST")
+    snapshot = BookEventSnapshot(
+        instrument=instrument,
+        event_index=0,
+        packet_sequence_number=1,
+        packet_sending_time_ns=0,
+        bids=(
+            OrderState(
+                price=9.0,
+                size=1,
+                secondary_order_id=1,
+                timestamp_ns=0,
+                packet_sequence_number=1,
+                rpt_seq=1,
+            ),
+        ),
+        asks=(),
+    )
+    manager = SnapshotOutputManager(
+        tickers=[instrument.symbol],
+        output_root=tmp_path,
+        csv_output=True,
+        drop_fields=set(),
+        level=1,
+    )
+    manager.handle_snapshot(snapshot)
+    manager.close()
+    bbo_path = tmp_path / instrument.symbol / "book_l1.csv"
+    l2_path = tmp_path / instrument.symbol / "book_l2.csv"
+    l3_path = tmp_path / instrument.symbol / "book_l3.csv"
+    assert bbo_path.exists()
+    assert not l2_path.exists()
+    assert not l3_path.exists()

@@ -67,6 +67,13 @@ def _configure_logging(verbose: bool, *, suppress_warnings: bool) -> None:
     help="Отсекать события до этого времени (ISO-8601 или ns с эпохи)",
 )
 @click.option(
+    "--level",
+    type=click.IntRange(1, 3),
+    default=3,
+    show_default=True,
+    help="1 — только book_l1, 2 — book_l1+book_l2, 3 — book_l1+book_l2+book_l3",
+)
+@click.option(
     "--progress/--no-progress",
     default=False,
     show_default=True,
@@ -98,6 +105,7 @@ def main(
     tickers: Sequence[str],
     feeds: Sequence[str],
     since: str | None,
+    level: int,
     progress: bool,
     csv_output: bool,
     no_warnings: bool,
@@ -113,6 +121,7 @@ def main(
         output_root=output_root,
         tickers=tickers,
         feeds=feeds,
+        level=level,
         since_ns=since_ns,
         show_progress=progress,
         suppress_rpt_warnings=no_rpt_warnings,
@@ -124,6 +133,7 @@ def main(
         output_root=output_root,
         csv_output=csv_output,
         drop_fields=drop_fields,
+        level=level,
     )
     replayer = BookReplayer(config, universe)
     result = replayer.replay(snapshot_consumer=output_manager.handle_snapshot)
@@ -150,12 +160,14 @@ class SnapshotOutputManager:
         output_root: Path,
         csv_output: bool,
         drop_fields: set[str],
+        level: int,
     ) -> None:
         self._ticker_order = list(tickers)
         self._ticker_filter = {ticker for ticker in tickers}
         self._output_root = output_root
         self._csv_output = csv_output
         self._drop_fields = drop_fields
+        self._level = level
         self._order_sinks: dict[str, _BaseRowSink] = {}
         self._level_sinks: dict[str, _BaseRowSink] = {}
         self._bbo_sinks: dict[str, _BaseRowSink] = {}
@@ -165,29 +177,32 @@ class SnapshotOutputManager:
         ticker = snapshot.instrument.symbol
         if ticker not in self._ticker_filter:
             return
-        order_rows = _filter_and_clean_rows(
-            iter_snapshot_order_rows(snapshot), ticker, self._drop_fields
-        )
-        self._write_rows(ticker, order_rows, kind="orders")
-        level_rows = _filter_and_clean_rows(
-            iter_snapshot_level_rows(snapshot), ticker, self._drop_fields
-        )
-        self._write_rows(ticker, level_rows, kind="levels")
-        bbo_rows = _filter_and_clean_rows(
-            iter_snapshot_bbo_rows(snapshot), ticker, self._drop_fields
-        )
-        self._write_rows(ticker, bbo_rows, kind="bbo")
+        if self._level >= 3:
+            order_rows = _filter_and_clean_rows(
+                iter_snapshot_order_rows(snapshot), ticker, self._drop_fields
+            )
+            self._write_rows(ticker, order_rows, kind="orders")
+        if self._level >= 2:
+            level_rows = _filter_and_clean_rows(
+                iter_snapshot_level_rows(snapshot), ticker, self._drop_fields
+            )
+            self._write_rows(ticker, level_rows, kind="levels")
+        if self._level >= 1:
+            bbo_rows = _filter_and_clean_rows(
+                iter_snapshot_bbo_rows(snapshot), ticker, self._drop_fields
+            )
+            self._write_rows(ticker, bbo_rows, kind="bbo")
 
     def emit_missing_warnings(self) -> None:
         for ticker in self._ticker_order:
             order_path = self._path_for(ticker, kind="orders")
             level_path = self._path_for(ticker, kind="levels")
             bbo_path = self._path_for(ticker, kind="bbo")
-            if ticker not in self._order_sinks:
+            if self._level >= 3 and ticker not in self._order_sinks:
                 LOGGER.warning("Нет данных для %s, файл пропущен", order_path.name)
-            if ticker not in self._level_sinks:
+            if self._level >= 2 and ticker not in self._level_sinks:
                 LOGGER.warning("Нет данных для %s, файл пропущен", level_path.name)
-            if ticker not in self._bbo_sinks:
+            if self._level >= 1 and ticker not in self._bbo_sinks:
                 LOGGER.warning("Нет данных для %s, файл пропущен", bbo_path.name)
 
     def close(self) -> None:

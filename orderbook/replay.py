@@ -80,6 +80,7 @@ class BookReplayer:
         recorder = EventRecorder(
             instruments=self._instrument_by_key,
             snapshot_consumer=snapshot_consumer,
+            level=self.config.level,
         )
         channel_iter = list(feed_selection.items())
         for channel, feed_events in iter_progress(
@@ -265,12 +266,17 @@ class EventRecorder:
         *,
         instruments: Mapping[SnapshotKey, InstrumentRecord],
         snapshot_consumer: Callable[[BookEventSnapshot], None] | None = None,
+        level: int = 3,
     ) -> None:
         self.pending_keys: set[SnapshotKey] = set()
         self.snapshots: List[BookEventSnapshot] = []
         self._snapshot_consumer = snapshot_consumer
         self._instruments = instruments
         self.event_index = 0
+        if level not in {1, 2, 3}:
+            raise ValueError("level must be 1, 2 or 3")
+        self._level = level
+        self._snapshot_depth = 1 if level == 1 else None
 
     def touch(self, key: SnapshotKey) -> None:
         self.pending_keys.add(key)
@@ -290,7 +296,7 @@ class EventRecorder:
             instrument = self._instruments.get(key)
             if not book or instrument is None:
                 continue
-            snapshot = book.snapshot()
+            snapshot = book.snapshot(depth=self._snapshot_depth)
             self._emit_snapshot(
                 BookEventSnapshot(
                     instrument=instrument,
