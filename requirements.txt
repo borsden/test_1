@@ -4,3 +4,4 @@ pyarrow>=12.0
 pandas>=2.1
 tqdm>=4.66
 plotly>=5.0
+kaleido>=0.2.1

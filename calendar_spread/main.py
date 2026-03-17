@@ -11,7 +11,8 @@ DEFAULT_COLUMNS = ("bid_price", "bid_size", "ask_price", "ask_size")
 RAW_DATA_DIR = Path(__file__).resolve().parents[1] / "data" / "orderbook"
 LEG_MERGE_TOLERANCE = pd.Timedelta("25ms")
 COMBO_MERGE_TOLERANCE = pd.Timedelta("2s")
-PLOT_OUTPUT = Path(__file__).resolve().parent / "spread_plot.html"
+PLOT_OUTPUT_HTML = Path(__file__).resolve().parent / "spread_plot.html"
+PLOT_OUTPUT_PNG = PLOT_OUTPUT_HTML.with_suffix(".png")
 
 # Configuration for the legs we want to combine into a calendar spread.
 LEG_DEFINITIONS = (
@@ -177,8 +178,8 @@ def build_spread_frame() -> pd.DataFrame:
     return spread.dropna(subset=["spread_mid"])
 
 
-def plot_spreads(spread_df: pd.DataFrame) -> Path:
-    """Создаёт интерактивный Plotly-график спредов и сохраняет его в HTML."""
+def plot_spreads(spread_df: pd.DataFrame) -> dict[str, Path]:
+    """Создаёт интерактивный Plotly-график и сохраняет его в HTML+PNG."""
     fig = go.Figure()
     lines = [
         ("spread_mid", "Mid spread"),
@@ -209,8 +210,9 @@ def plot_spreads(spread_df: pd.DataFrame) -> Path:
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
 
-    fig.write_html(PLOT_OUTPUT, auto_open=False, include_plotlyjs="cdn")
-    return PLOT_OUTPUT
+    fig.write_html(PLOT_OUTPUT_HTML, auto_open=False, include_plotlyjs="cdn")
+    fig.write_image(PLOT_OUTPUT_PNG, format="png", width=1600, height=700, scale=2)
+    return {"html": PLOT_OUTPUT_HTML, "png": PLOT_OUTPUT_PNG}
 
 
 def main() -> None:
@@ -228,8 +230,9 @@ def main() -> None:
     print("Spread snapshot:")
     print(spread_df.loc[:, preview_cols].tail())
 
-    output_path = plot_spreads(spread_df)
-    print(f"Interactive plot saved to: {output_path}")
+    outputs = plot_spreads(spread_df)
+    print(f"Interactive plot saved to: {outputs['html']}")
+    print(f"PNG snapshot saved to: {outputs['png']}")
 
 
 if __name__ == "__main__":
