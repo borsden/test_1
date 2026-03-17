@@ -3,3 +3,4 @@ click>=8.1
 pyarrow>=12.0
 pandas>=2.1
 tqdm>=4.66
+plotly>=5.0
