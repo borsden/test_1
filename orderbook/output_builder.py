@@ -32,21 +32,7 @@ def build_bbo_rows(
     del universe
     rows: List[dict] = []
     for snapshot in snapshots:
-        symbol = snapshot.instrument.symbol
-        bid = snapshot.bids[0] if snapshot.bids else None
-        ask = snapshot.asks[0] if snapshot.asks else None
-        rows.append(
-            {
-                "symbol": symbol,
-                "event_index": snapshot.event_index,
-                "packet_sequence_number": snapshot.packet_sequence_number,
-                "packet_sending_time_ns": snapshot.packet_sending_time_ns,
-                "bid_price": bid.price if bid else None,
-                "bid_size": bid.size if bid else None,
-                "ask_price": ask.price if ask else None,
-                "ask_size": ask.size if ask else None,
-            }
-        )
+        rows.extend(iter_snapshot_bbo_rows(snapshot))
     return rows
 
 
@@ -60,6 +46,22 @@ def iter_snapshot_level_rows(snapshot: BookEventSnapshot) -> Iterator[dict]:
     base = _snapshot_row_base(snapshot)
     yield from _levels_for_side(snapshot.bids, "BID", base)
     yield from _levels_for_side(snapshot.asks, "ASK", base)
+
+
+def iter_snapshot_bbo_rows(snapshot: BookEventSnapshot) -> Iterator[dict]:
+    base = _snapshot_row_base(snapshot)
+    bid = snapshot.bids[0] if snapshot.bids else None
+    ask = snapshot.asks[0] if snapshot.asks else None
+    row = dict(base)
+    row.update(
+        {
+            "bid_price": bid.price if bid else None,
+            "bid_size": bid.size if bid else None,
+            "ask_price": ask.price if ask else None,
+            "ask_size": ask.size if ask else None,
+        }
+    )
+    yield row
 
 
 def _rows_for_side(orders, side: str, base: Mapping[str, object]) -> Iterator[dict]:

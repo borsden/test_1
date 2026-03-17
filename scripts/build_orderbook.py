@@ -14,7 +14,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from orderbook import BookEventSnapshot, BookReplayer, InstrumentUniverse, PipelineConfig
-from orderbook.output_builder import iter_snapshot_level_rows, iter_snapshot_order_rows
+from orderbook.output_builder import (
+    iter_snapshot_bbo_rows,
+    iter_snapshot_level_rows,
+    iter_snapshot_order_rows,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -39,7 +43,7 @@ def _configure_logging(verbose: bool, *, suppress_warnings: bool) -> None:
     type=click.Path(path_type=Path, file_okay=False),
     default=Path("data/orderbook"),
     show_default=True,
-    help="Куда записывать book_l3/book_l2",
+    help="Куда записывать book_l3/book_l2/book_l1",
 )
 @click.option(
     "--ticker",
@@ -154,6 +158,7 @@ class SnapshotOutputManager:
         self._drop_fields = drop_fields
         self._order_sinks: dict[str, _BaseRowSink] = {}
         self._level_sinks: dict[str, _BaseRowSink] = {}
+        self._bbo_sinks: dict[str, _BaseRowSink] = {}
         self.files_written: list[Path] = []
 
     def handle_snapshot(self, snapshot: BookEventSnapshot) -> None:
@@ -168,18 +173,29 @@ class SnapshotOutputManager:
             iter_snapshot_level_rows(snapshot), ticker, self._drop_fields
         )
         self._write_rows(ticker, level_rows, kind="levels")
+        bbo_rows = _filter_and_clean_rows(
+            iter_snapshot_bbo_rows(snapshot), ticker, self._drop_fields
+        )
+        self._write_rows(ticker, bbo_rows, kind="bbo")
 
     def emit_missing_warnings(self) -> None:
         for ticker in self._ticker_order:
             order_path = self._path_for(ticker, kind="orders")
             level_path = self._path_for(ticker, kind="levels")
+            bbo_path = self._path_for(ticker, kind="bbo")
             if ticker not in self._order_sinks:
                 LOGGER.warning("Нет данных для %s, файл пропущен", order_path.name)
             if ticker not in self._level_sinks:
                 LOGGER.warning("Нет данных для %s, файл пропущен", level_path.name)
+            if ticker not in self._bbo_sinks:
+                LOGGER.warning("Нет данных для %s, файл пропущен", bbo_path.name)
 
     def close(self) -> None:
-        for sink in list(self._order_sinks.values()) + list(self._level_sinks.values()):
+        for sink in (
+            list(self._order_sinks.values())
+            + list(self._level_sinks.values())
+            + list(self._bbo_sinks.values())
+        ):
             sink.close()
 
     def _write_rows(self, ticker: str, rows: list[dict], *, kind: str) -> None:
@@ -191,7 +207,15 @@ class SnapshotOutputManager:
             self.files_written.append(sink.path)
 
     def _ensure_sink(self, ticker: str, kind: str) -> "_BaseRowSink":
-        storage = self._order_sinks if kind == "orders" else self._level_sinks
+        storages = {
+            "orders": self._order_sinks,
+            "levels": self._level_sinks,
+            "bbo": self._bbo_sinks,
+        }
+        try:
+            storage = storages[kind]
+        except KeyError as err:
+            raise ValueError(f"Unknown sink kind: {kind}") from err
         sink = storage.get(ticker)
         if sink is None:
             path = self._path_for(ticker, kind=kind)
@@ -202,7 +226,15 @@ class SnapshotOutputManager:
     def _path_for(self, ticker: str, *, kind: str) -> Path:
         folder = self._output_root / ticker
         suffix = "csv" if self._csv_output else "parquet"
-        name = "book_l3" if kind == "orders" else "book_l2"
+        names = {
+            "orders": "book_l3",
+            "levels": "book_l2",
+            "bbo": "book_l1",
+        }
+        try:
+            name = names[kind]
+        except KeyError as err:
+            raise ValueError(f"Unknown sink kind: {kind}") from err
         return folder / f"{name}.{suffix}"
 
 
